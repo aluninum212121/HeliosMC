@@ -10,7 +10,7 @@
   - оценка k_eff по поколениям   (estimate_k_full)
 
 Соответствует БЛОКУ 3 исходного монолита NSPM MCNP 3000.py.
-Код перенесён без изменений (рефакторинг только по структуре).
+Модель транспорта сохранена; статистика учитывает всё поколение отдельно от выборки путей.
 """
 
 import numpy as np
@@ -82,7 +82,7 @@ def transport_batch(positions, directions, mfp, sigma_f, sigma_a, sigma_s,
     """
     Транспортирует партию нейтронов одновременно.
     Возвращает: final_positions, final_directions, fates, fission_positions, paths
-    fates: 0=fission, 1=absorption, 2=leak
+    fates: 0=fission, 1=absorption, 2=leak, -1=unfinished (step limit)
     paths: список истории позиций для каждого нейтрона
     """
     n_neutrons = positions.shape[0]
@@ -158,8 +158,11 @@ def transport_batch(positions, directions, mfp, sigma_f, sigma_a, sigma_s,
 
     return positions, directions, fates, fission_positions, paths
 
-def run_generation_batch(positions, directions, material, radius, max_samples_per_gen=40):
-    """Транспортирует поколение нейтронов и возвращает данные для визуализации"""
+def run_generation_batch(positions, directions, material, radius, max_samples_per_gen=40,
+                         max_steps=500):
+    """Return source arrays, three terminal counts, sampled paths, fission points,
+    and complete outcome counts (including unfinished particles).
+    """
     n_neutrons = positions.shape[0]
 
     # Транспортируем нейтроны
@@ -169,13 +172,21 @@ def run_generation_batch(positions, directions, material, radius, max_samples_pe
         material.sigma_f, material.sigma_a, material.sigma_s,
         material.nu,
         radius,
-        max_steps=500
+        max_steps=max_steps
     )
 
     # Подсчитываем результаты
     fissions = np.sum(fates == 0)
     absorptions = np.sum(fates == 1)
     leakages = np.sum(fates == 2)
+    outcome_counts = {
+        "fission": int(fissions),
+        "absorption": int(absorptions),
+        "leak": int(leakages),
+        "unfinished": int(np.sum(fates == -1)),
+    }
+    if sum(outcome_counts.values()) != n_neutrons:
+        raise RuntimeError("Generation outcome counts do not match processed particles")
 
     # Формируем новый источник (вторичные нейтроны)
     n_secondary = int(fissions * material.nu)
@@ -205,7 +216,7 @@ def run_generation_batch(positions, directions, material, radius, max_samples_pe
     sample_count = min(n_neutrons, max_samples_per_gen)
     sample_idx = np.random.choice(n_neutrons, size=sample_count, replace=False)
     path_frames = []
-    fate_map = {0: "fission", 1: "absorption", 2: "leak"}
+    fate_map = {0: "fission", 1: "absorption", 2: "leak", -1: "unfinished"}
 
     for idx in sample_idx:
         # Используем полную историю пути из transport_batch
@@ -217,7 +228,7 @@ def run_generation_batch(positions, directions, material, radius, max_samples_pe
 
     return (new_positions, new_directions,
             fissions, absorptions, leakages,
-            path_frames, fiss_pts_array)
+            path_frames, fiss_pts_array, outcome_counts)
 
 def estimate_k_full(n_gen=30, n_source=150, radius=25.0,
                     material=None, n_burnin=8, callback=None):
@@ -235,6 +246,7 @@ def estimate_k_full(n_gen=30, n_source=150, radius=25.0,
     k_history = []
     path_frames = []
     fiss_frames = []
+    generation_stats = []
 
     for gen in range(n_gen):
         if positions.shape[0] == 0:
@@ -243,13 +255,15 @@ def estimate_k_full(n_gen=30, n_source=150, radius=25.0,
         # Транспортируем поколение
         (next_pos, next_dirs,
          fiss, abso, leak,
-         paths, fpts) = run_generation_batch(positions, directions, material, radius)
+         paths, fpts, counts) = run_generation_batch(positions, directions, material, radius)
 
         # k-эффективное = (нейтроны в следующем поколении) / (нейтроны в текущем)
         k = len(next_pos) / max(1, positions.shape[0]) if positions.shape[0] > 0 else 0.0
         k_history.append(k)
         path_frames.append(paths)
         fiss_frames.append(fpts)
+        generation_stats.append({"processed": int(positions.shape[0]),
+                                 "outcome_counts": counts})
 
         if callback:
             callback(gen + 1, k, fiss, abso, leak)
@@ -276,6 +290,7 @@ def estimate_k_full(n_gen=30, n_source=150, radius=25.0,
         "k_std":       k_std,
         "path_frames": path_frames,
         "fiss_frames": fiss_frames,
+        "generation_stats": generation_stats,
     }
 
 

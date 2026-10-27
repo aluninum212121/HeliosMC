@@ -14,7 +14,6 @@ from matplotlib.gridspec import GridSpec
 import matplotlib.colors as mcolors
 from collections import deque
 
-from numba_compat import HAS_NUMBA
 from material import MATERIALS
 from physics import estimate_k_full
 
@@ -267,7 +266,7 @@ class NeutronSimGUI:
             "fission":    self.C["orange"],
             "absorption": self.C["purple"],
             "leak":       self.C["blue"],
-            None:         self.C["dim"],
+            "unfinished": self.C["dim"],
         }
         paths = self.result["path_frames"][gen_idx]
         for path, fate in paths:
@@ -285,6 +284,7 @@ class NeutronSimGUI:
             ("деление",    self.C["orange"]),
             ("поглощение", self.C["purple"]),
             ("утечка",     self.C["blue"]),
+            ("не завершены", self.C["dim"]),
         ]
         for i, (label, color) in enumerate(legend_items):
             ax.plot([], [], color=color, linewidth=1.5,
@@ -371,20 +371,11 @@ class NeutronSimGUI:
         ax.set_title("Баланс нейтронов (текущее поколение)",
                      color=self.C["dim"], fontsize=8)
 
-        gen = min(self.current_gen, len(self.result["path_frames"])-1)
-        paths = self.result["path_frames"][gen]
-        counts = {"деление": 0, "поглощение": 0, "утечка": 0}
-        fate_map = {"fission": "деление",
-                    "absorption": "поглощение",
-                    "leak": "утечка"}
-        for _, fate in paths:
-            key = fate_map.get(fate)
-            if key:
-                counts[key] += 1
-
-        labels = list(counts.keys())
-        values = list(counts.values())
-        colors = [self.C["orange"], self.C["purple"], self.C["blue"]]
+        gen = max(0, min(self.current_gen, len(self.result["generation_stats"])-1))
+        counts = self.result["generation_stats"][gen]["outcome_counts"]
+        labels = ["деление", "поглощение", "утечка", "не завершены"]
+        values = [counts[key] for key in ("fission", "absorption", "leak", "unfinished")]
+        colors = [self.C["orange"], self.C["purple"], self.C["blue"], self.C["dim"]]
         bars   = ax.bar(labels, values, color=colors, alpha=0.8,
                         edgecolor=self.C["border"], linewidth=0.5)
         for bar, val in zip(bars, values):
@@ -511,23 +502,4 @@ class NeutronSimGUI:
 # ══════════════════════════════════════════════════════════════════════
 #  ЗАПУСК
 # ══════════════════════════════════════════════════════════════════════
-
-if __name__ == "__main__":
-    print("NeutronMC — запуск интерфейса...")
-    print("Зависимости: numpy, matplotlib")
-    print("Опционально: numba (для ускорения)")
-    print()
-    if HAS_NUMBA:
-        print("✓ Numba обнаружена — используется JIT-компиляция для физики")
-    else:
-        print("⚠ Numba не найдена — используется Python (медленнее)")
-        print("  Установка: pip install numba")
-    print()
-    print("Режим: массивная генерация нейтронов с NumPy")
-    print()
-    app = NeutronSimGUI()
-
-
-
-
 
