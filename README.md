@@ -1,4 +1,4 @@
-# NeutronMC
+# HeliosMC
 
 Launch the modular Matplotlib application from this directory:
 
