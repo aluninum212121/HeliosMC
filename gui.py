@@ -9,17 +9,17 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import matplotlib.animation as animation
-from matplotlib.widgets import Slider, Button, RadioButtons
+from matplotlib.widgets import Slider, Button, RadioButtons, Widget
 from matplotlib.gridspec import GridSpec
 import matplotlib.colors as mcolors
-from collections import deque
+from simulation_worker import SimulationWorker, ExecutionState
 
 from material import MATERIALS
-from physics import estimate_k_full
+from physics import estimate_k_full, DEFAULT_MAX_MEMORY_BYTES
 
 
 class NeutronSimGUI:
-    def __init__(self):
+    def __init__(self, show=True):
         # ── цвета ──────────────────────────────────────────────────
         self.C = {
             "bg":       "#0D1117",
@@ -36,6 +36,14 @@ class NeutronSimGUI:
             "react_bd": "#3FB950",
         }
 
+        self.worker = SimulationWorker()
+        self._closed = False
+        self.seed = None
+        self.max_samples_per_gen = 40
+        self.max_steps = 500
+        self.max_memory_bytes = DEFAULT_MAX_MEMORY_BYTES
+        self.result_radius = None
+        self.result_config = None
         self.result       = None
         self.current_gen  = 0
         self.anim_running = False
@@ -44,7 +52,12 @@ class NeutronSimGUI:
         self._build_layout()
         self._build_controls()
         self._draw_empty_reactor()
-        plt.show()
+        self._timer = self.fig.canvas.new_timer(interval=100)
+        self._timer.add_callback(self._poll_worker)
+        self._timer.start()
+        self.fig.canvas.mpl_connect("close_event", self._on_close)
+        if show:
+            plt.show()
 
     # ── компоновка окна ────────────────────────────────────────────
     def _build_layout(self):
@@ -137,6 +150,12 @@ class NeutronSimGUI:
             btn.label.set_color(self.C["text"])
             btn.label.set_fontsize(9)
 
+        self.btn_cancel = Button(make_ax([0.47, 0.10, 0.09, 0.05]), "Cancel",
+                                 color=self.C["panel"], hovercolor=self.C["border"])
+        self.btn_cancel.label.set_color(self.C["text"])
+        self.btn_cancel.on_clicked(lambda event: self.worker.cancel())
+        self.btn_cancel.set_active(False)
+
         # выбор материала
         ax_radio = make_ax([0.62, 0.04, 0.16, 0.14])
         ax_radio.set_title("Материал", color=self.C["dim"], fontsize=8, pad=4)
@@ -169,7 +188,7 @@ class NeutronSimGUI:
         mod = patches.Circle((0,0), r*1.15, color="#0A2010", zorder=1)
         ax.add_patch(mod)
         # активная зона
-        core = patches.Circle((0,0), r, color=self.C["reactor"],
+        core = patches.Circle((0,0), r, facecolor=self.C["reactor"],
                                linewidth=1.5, edgecolor=self.C["react_bd"], zorder=2)
         ax.add_patch(core)
         # топливные элементы (схема)
@@ -191,36 +210,86 @@ class NeutronSimGUI:
         self.fig.canvas.draw_idle()
 
     # ── запуск симуляции ───────────────────────────────────────────
+    @property
+    def execution_state(self):
+        return self.worker.state
+
+    def _set_running_controls(self, running):
+        for widget in (self.sl_radius, self.sl_n, self.sl_gen, self.radio,
+                       self.btn_run, self.btn_anim, self.btn_prev, self.btn_next):
+            Widget.set_active(widget, not running)
+            widget.ax.set_alpha(0.5 if running else 1.0)
+        self.btn_cancel.set_active(running)
+
     def _on_run(self, event):
+        if self.worker.state == ExecutionState.RUNNING or self._closed:
+            return
         if self.anim_obj:
             self.anim_obj.event_source.stop()
             self.anim_obj = None
+        self.anim_running = False
+        self.btn_anim.label.set_text("⟳  Анимация")
+        try:
+            radius = float(self.sl_radius.val)
+            config = dict(n_gen=int(self.sl_gen.val), n_source=int(self.sl_n.val),
+                          radius=radius, material=MATERIALS[self.radio.value_selected],
+                          seed=self.seed, max_samples_per_gen=self.max_samples_per_gen,
+                          max_steps=self.max_steps, max_memory_bytes=self.max_memory_bytes)
+            self.result = None
+            self.result_radius = radius
+            self.result_config = config
+            self.worker.start(estimate_k_full, **config)
+        except Exception as exc:
+            self.worker.state = ExecutionState.FAILED
+            self._set_running_controls(False)
+            self._update_status(f"{type(exc).__name__}: {exc}", self.C["orange"])
+        else:
+            self._set_running_controls(True)
+            self._update_status("RUNNING — calculating…", self.C["yellow"])
+        self.fig.canvas.draw_idle()
 
-        mat_name = self.radio.value_selected
-        mat      = MATERIALS[mat_name]
-        radius   = float(self.sl_radius.val)
-        n_source = int(self.sl_n.val)
-        n_gen    = int(self.sl_gen.val)
+    def _poll_worker(self):
+        message = self.worker.poll()
+        if message is None or self._closed:
+            return
+        state, payload = message
+        self._set_running_controls(False)
+        if state == ExecutionState.COMPLETED:
+            self.result = payload
+            self.current_gen = max(0, len(payload["k_history"]) - 1)
+            try:
+                self._render_all(self.result_radius)
+            except Exception as exc:
+                self.worker.state = ExecutionState.FAILED
+                self.result = None
+                self._update_status(f"Render failed: {type(exc).__name__}: {exc}", self.C["orange"])
+        else:
+            self.result = None
+            self._update_status(payload if state == ExecutionState.FAILED else "CANCELLED",
+                                self.C["orange"])
+        self.fig.canvas.draw_idle()
 
-        # ИСПРАВЛЕНИЕ: Принудительное обновление интерфейса, чтобы окно не зависало на время расчетов
-        self._update_status("⏳  Симуляция...", self.C["yellow"])
-        self.fig.canvas.draw()
-        self.fig.canvas.flush_events()
-
-        self.result = estimate_k_full(
-            n_gen=n_gen, n_source=n_source,
-            radius=radius, material=mat)
-
-        self.current_gen = len(self.result["k_history"]) - 1
-        self._render_all(radius)
+    def _on_close(self, event):
+        self._closed = True
+        self._timer.stop()
+        self.worker.cancel()
+        if self.anim_obj and self.anim_obj.event_source:
+            self.anim_obj.event_source.stop()
+        # The non-daemon worker exits at the next generation checkpoint.
+        # No blocking join on the GUI thread, and no unsafe termination.
 
     # ── рендер всех панелей ────────────────────────────────────────
     def _render_all(self, radius=None):
         if self.result is None:
             return
+        if not self.result["k_history"]:
+            self._update_status_full()
+            self.fig.canvas.draw_idle()
+            return
         if radius is None:
-            radius = float(self.sl_radius.val)
+            radius = self.result_radius or float(self.sl_radius.val)
 
+        self.current_gen = max(0, min(self.current_gen, len(self.result["k_history"]) - 1))
         self._draw_trajectories(radius)
         self._draw_k_chart()
         self._draw_heatmap(radius)
@@ -238,7 +307,9 @@ class NeutronSimGUI:
         ax.set_aspect("equal")
         ax.axis("off")
 
-        gen_idx = min(self.current_gen, len(self.result["path_frames"])-1)
+        if not self.result or not self.result["k_history"]:
+            return
+        gen_idx = min(self.current_gen, len(self.result["k_history"])-1)
         gen_idx = max(0, gen_idx)
         title = f"Поколение {gen_idx+1}/{len(self.result['k_history'])}  |  " \
                 f"k = {self.result['k_history'][gen_idx]:.4f}"
@@ -249,7 +320,7 @@ class NeutronSimGUI:
                                     color="#0A2010", zorder=1))
         # активная зона
         ax.add_patch(patches.Circle((0,0), radius,
-                                    color=self.C["reactor"],
+                                    facecolor=self.C["reactor"],
                                     linewidth=1.5,
                                     edgecolor=self.C["react_bd"], zorder=2))
         # топливные элементы
@@ -268,11 +339,12 @@ class NeutronSimGUI:
             "leak":       self.C["blue"],
             "unfinished": self.C["dim"],
         }
-        paths = self.result["path_frames"][gen_idx]
+        frames = self.result["path_frames"]
+        paths = frames[gen_idx] if gen_idx < len(frames) else []
         for path, fate in paths:
             if len(path) < 2:
                 continue
-            pts = np.array(path)
+            pts = np.asarray(path)
             color = fate_colors.get(fate, self.C["dim"])
             ax.plot(pts[:,0], pts[:,1],
                     color=color, alpha=0.45, linewidth=0.7, zorder=4)
@@ -339,15 +411,15 @@ class NeutronSimGUI:
         ax.set_title("Карта делений (все поколения)",
                      color=self.C["dim"], fontsize=8)
 
-        all_pts = []
+        h = np.zeros((30, 30))
+        edges = np.linspace(-radius, radius, 31)
         for frame in self.result["fiss_frames"]:
-            all_pts.extend(frame)
-
-        if all_pts:
-            pts = np.array(all_pts)
-            h, xedge, yedge = np.histogram2d(
-                pts[:,0], pts[:,1], bins=30,
-                range=[[-radius, radius], [-radius, radius]])
+            if len(frame):
+                values, _, _ = np.histogram2d(
+                    frame[:, 0], frame[:, 1], bins=(edges, edges))
+                h += values
+        xedge = yedge = edges
+        if h.any():
             h = np.ma.masked_where(h == 0, h)
             cmap = plt.cm.inferno
             cmap.set_bad(color=self.C["bg"])
@@ -371,6 +443,8 @@ class NeutronSimGUI:
         ax.set_title("Баланс нейтронов (текущее поколение)",
                      color=self.C["dim"], fontsize=8)
 
+        if not self.result or not self.result["generation_stats"]:
+            return
         gen = max(0, min(self.current_gen, len(self.result["generation_stats"])-1))
         counts = self.result["generation_stats"][gen]["outcome_counts"]
         labels = ["деление", "поглощение", "утечка", "не завершены"]
@@ -408,8 +482,19 @@ class NeutronSimGUI:
 
         k    = r["k_mean"]
         kstd = r["k_std"]
+        unfinished = sum(s["outcome_counts"]["unfinished"]
+                         for s in r["generation_stats"])
+        no_estimate = not r["k_history"]
 
-        if k > 1.01:
+        if no_estimate:
+            status_text = "НЕТ ОЦЕНКИ"
+            status_color = self.C["dim"]
+            status_desc = "нет обработанных поколений"
+        elif unfinished:
+            status_text = "НЕПОЛНЫЙ РЕЗУЛЬТАТ"
+            status_color = self.C["yellow"]
+            status_desc = f"Лимит шагов: {unfinished} историй"
+        elif k > 1.01:
             status_text  = "НАДКРИТИЧНЫЙ"
             status_color = self.C["orange"]
             status_desc  = "реакция разгоняется"
@@ -425,7 +510,7 @@ class NeutronSimGUI:
         y = 0.95
         def line(text, color=None, size=9, dy=0.07, bold=False):
             nonlocal y
-            y -= dy
+            y -= dy * 0.8
             ax.text(0.5, y, text, ha="center", va="top",
                     color=color or self.C["dim"],
                     fontsize=size, transform=ax.transAxes,
@@ -434,17 +519,20 @@ class NeutronSimGUI:
 
         line("РЕЗУЛЬТАТ", self.C["dim"], size=8, dy=0.04)
         line("─────────────────", self.C["border"], size=8, dy=0.04)
-        line(f"k_eff = {k:.4f}", self.C["text"], size=14, bold=True, dy=0.10)
-        line(f"± {kstd:.4f}", self.C["dim"], size=9, dy=0.07)
+        line("k: нет оценки" if no_estimate else f"k (источник) = {k:.4f}",
+             self.C["text"], size=12, bold=True, dy=0.10)
+        line(f"σ поколений: {kstd:.4f}", self.C["dim"], size=8, dy=0.07)
         line(status_text, status_color, size=11, bold=True, dy=0.09)
         line(status_desc, status_color, size=8, dy=0.06)
         line("─────────────────", self.C["border"], size=8, dy=0.08)
 
         mat_name = self.radio.value_selected
-        mat      = MATERIALS[mat_name]
+        mat      = self.result_config["material"] if self.result_config else MATERIALS[mat_name]
+        radius = self.result_radius if self.result_radius is not None else self.sl_radius.val
+        n_source = self.result_config["n_source"] if self.result_config else int(self.sl_n.val)
         line(f"Материал: {mat.name}", size=8, dy=0.06)
-        line(f"Радиус:   {self.sl_radius.val:.0f} см", size=8, dy=0.05)
-        line(f"Нейтронов/п.: {int(self.sl_n.val)}", size=8, dy=0.05)
+        line(f"Радиус:   {radius:.0f} см", size=8, dy=0.05)
+        line(f"Нейтронов/п.: {n_source}", size=8, dy=0.05)
         line(f"Поколений:    {len(r['k_history'])}", size=8, dy=0.05)
         line("─────────────────", self.C["border"], size=8, dy=0.07)
         line(f"λ (св.пробег): {mat.mean_free_path():.3f} см", size=8, dy=0.06)
@@ -452,7 +540,11 @@ class NeutronSimGUI:
 
         # интерпретация
         line("─────────────────", self.C["border"], size=8, dy=0.08)
-        if k > 1.01:
+        if unfinished:
+            hint = "Оценка может быть неполной.\nУвеличьте лимит шагов."
+        elif no_estimate:
+            hint = "Нет данных для классификации"
+        elif k > 1.01:
             hint = "Уменьшите\nрадиус или обогащение"
         elif k < 0.99:
             hint = "Увеличьте\nрадиус или обогащение"
@@ -462,7 +554,7 @@ class NeutronSimGUI:
 
     # ── анимация по поколениям ────────────────────────────────────
     def _on_anim(self, event):
-        if self.result is None:
+        if self.result is None or not self.result["k_history"]:
             return
         if self.anim_running:
             if self.anim_obj:
@@ -473,7 +565,7 @@ class NeutronSimGUI:
 
         self.anim_running = True
         self.btn_anim.label.set_text("⏹  Стоп")
-        radius = float(self.sl_radius.val)
+        radius = self.result_radius or float(self.sl_radius.val)
         n_gens = len(self.result["k_history"])
 
         def update(frame):
@@ -489,11 +581,11 @@ class NeutronSimGUI:
         self.fig.canvas.draw_idle()
 
     def _step_gen(self, delta):
-        if self.result is None:
+        if self.result is None or not self.result["k_history"]:
             return
         n = len(self.result["k_history"])
         self.current_gen = (self.current_gen + delta) % n
-        self._draw_trajectories(float(self.sl_radius.val))
+        self._draw_trajectories(self.result_radius or float(self.sl_radius.val))
         self._draw_k_chart()
         self._draw_bar()
         self.fig.canvas.draw_idle()

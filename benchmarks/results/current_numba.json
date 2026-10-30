@@ -1,0 +1,870 @@
+{
+  "variant": "current",
+  "backend": "numba",
+  "source_sha256": "9467d851447ea28b61b86f9989fba99aec95da99fe06ed61958675fe4da09194",
+  "python": "3.14.4 (tags/v3.14.4:23116f9, Apr  7 2026, 14:10:54) [MSC v.1944 64 bit (AMD64)]",
+  "numpy": "2.4.4",
+  "numba": "0.67.0",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "processor": "Intel64 Family 6 Model 142 Stepping 10, GenuineIntel",
+  "logical_cpus": 8,
+  "seed": 2026,
+  "repeats": 3,
+  "steps": 8,
+  "samples": 0,
+  "first_transport_call_seconds": 5.6613173999940045,
+  "records": [
+    {
+      "stage": "generation",
+      "n": 150,
+      "workload": "scatter",
+      "processed": 150,
+      "status": "incomplete",
+      "counts": {
+        "fission": 0,
+        "absorption": 0,
+        "leak": 0,
+        "unfinished": 150
+      },
+      "seconds": [
+        0.00045769999269396067,
+        0.00033190002432093024,
+        0.00032570003531873226
+      ],
+      "median_seconds": 0.00033190002432093024,
+      "peak_tracked_bytes": 15654,
+      "retained_bytes": 2747
+    },
+    {
+      "stage": "end_to_end",
+      "n": 150,
+      "workload": "scatter",
+      "processed": 150,
+      "k_history": [
+        0.0
+      ],
+      "status": "incomplete",
+      "seconds": [
+        0.0007812000112608075,
+        0.0005853999755345285,
+        0.0006972000119276345
+      ],
+      "median_seconds": 0.0006972000119276345,
+      "peak_tracked_bytes": 25110,
+      "retained_bytes": 4001
+    },
+    {
+      "stage": "generation",
+      "n": 150,
+      "workload": "mixed",
+      "processed": 150,
+      "status": "complete",
+      "counts": {
+        "fission": 88,
+        "absorption": 62,
+        "leak": 0,
+        "unfinished": 0
+      },
+      "seconds": [
+        0.0009268000139854848,
+        0.000686099985614419,
+        0.0005803999956697226
+      ],
+      "median_seconds": 0.000686099985614419,
+      "peak_tracked_bytes": 44373,
+      "retained_bytes": 15292
+    },
+    {
+      "stage": "end_to_end",
+      "n": 150,
+      "workload": "mixed",
+      "processed": 450,
+      "k_history": [
+        1.26,
+        1.2733333333333334,
+        1.4733333333333334
+      ],
+      "status": "complete",
+      "seconds": [
+        0.0016035999869927764,
+        0.001532799971755594,
+        0.001434599980711937
+      ],
+      "median_seconds": 0.001532799971755594,
+      "peak_tracked_bytes": 71193,
+      "retained_bytes": 11568
+    },
+    {
+      "stage": "generation",
+      "n": 150,
+      "workload": "fission",
+      "processed": 150,
+      "status": "complete",
+      "counts": {
+        "fission": 150,
+        "absorption": 0,
+        "leak": 0,
+        "unfinished": 0
+      },
+      "seconds": [
+        0.0006579000037163496,
+        0.0004371999530121684,
+        0.00043810001807287335
+      ],
+      "median_seconds": 0.00043810001807287335,
+      "peak_tracked_bytes": 67057,
+      "retained_bytes": 24008
+    },
+    {
+      "stage": "end_to_end",
+      "n": 150,
+      "workload": "fission",
+      "processed": 450,
+      "k_history": [
+        2.4266666666666667,
+        2.4266666666666667,
+        2.4266666666666667
+      ],
+      "status": "complete",
+      "seconds": [
+        0.001733899989631027,
+        0.0016444000066258013,
+        0.001568900013808161
+      ],
+      "median_seconds": 0.0016444000066258013,
+      "peak_tracked_bytes": 104561,
+      "retained_bytes": 16480
+    },
+    {
+      "stage": "generation",
+      "n": 150,
+      "workload": "absorption",
+      "processed": 150,
+      "status": "complete",
+      "counts": {
+        "fission": 0,
+        "absorption": 150,
+        "leak": 0,
+        "unfinished": 0
+      },
+      "seconds": [
+        0.00022469996474683285,
+        0.00022230000467970967,
+        0.00021249998826533556
+      ],
+      "median_seconds": 0.00022230000467970967,
+      "peak_tracked_bytes": 15682,
+      "retained_bytes": 2775
+    },
+    {
+      "stage": "end_to_end",
+      "n": 150,
+      "workload": "absorption",
+      "processed": 150,
+      "k_history": [
+        0.0
+      ],
+      "status": "complete",
+      "seconds": [
+        0.0004883999936282635,
+        0.00044810003601014614,
+        0.00043239997467026114
+      ],
+      "median_seconds": 0.00044810003601014614,
+      "peak_tracked_bytes": 25110,
+      "retained_bytes": 4001
+    },
+    {
+      "stage": "generation",
+      "n": 150,
+      "workload": "leak",
+      "processed": 150,
+      "status": "complete",
+      "counts": {
+        "fission": 0,
+        "absorption": 0,
+        "leak": 150,
+        "unfinished": 0
+      },
+      "seconds": [
+        0.0002894999925047159,
+        0.0002744999947026372,
+        0.0002696000155992806
+      ],
+      "median_seconds": 0.0002744999947026372,
+      "peak_tracked_bytes": 15682,
+      "retained_bytes": 2775
+    },
+    {
+      "stage": "end_to_end",
+      "n": 150,
+      "workload": "leak",
+      "processed": 150,
+      "k_history": [
+        0.0
+      ],
+      "status": "complete",
+      "seconds": [
+        0.0004952999879606068,
+        0.0004458999610505998,
+        0.00043399998685345054
+      ],
+      "median_seconds": 0.0004458999610505998,
+      "peak_tracked_bytes": 25110,
+      "retained_bytes": 4001
+    },
+    {
+      "stage": "secondary_with_wrapper",
+      "n": 150,
+      "workload": "fission",
+      "secondary": 364,
+      "seconds": [
+        0.00038919999497011304,
+        0.0003398999688215554,
+        0.00032809999538585544
+      ],
+      "median_seconds": 0.0003398999688215554,
+      "peak_tracked_bytes": 54517,
+      "retained_bytes": 23420
+    },
+    {
+      "stage": "generation",
+      "n": 2000,
+      "workload": "scatter",
+      "processed": 2000,
+      "status": "incomplete",
+      "counts": {
+        "fission": 0,
+        "absorption": 0,
+        "leak": 0,
+        "unfinished": 2000
+      },
+      "seconds": [
+        0.0027354000485502183,
+        0.002772600040771067,
+        0.002875700010918081
+      ],
+      "median_seconds": 0.002772600040771067,
+      "peak_tracked_bytes": 158164,
+      "retained_bytes": 2839
+    },
+    {
+      "stage": "end_to_end",
+      "n": 2000,
+      "workload": "scatter",
+      "processed": 2000,
+      "k_history": [
+        0.0
+      ],
+      "status": "incomplete",
+      "seconds": [
+        0.003083900024648756,
+        0.0030035999952815473,
+        0.0028205999988131225
+      ],
+      "median_seconds": 0.0030035999952815473,
+      "peak_tracked_bytes": 271192,
+      "retained_bytes": 4021
+    },
+    {
+      "stage": "generation",
+      "n": 2000,
+      "workload": "mixed",
+      "processed": 2000,
+      "status": "complete",
+      "counts": {
+        "fission": 1169,
+        "absorption": 831,
+        "leak": 0,
+        "unfinished": 0
+      },
+      "seconds": [
+        0.0029756000149063766,
+        0.002688799984753132,
+        0.0027982000028714538
+      ],
+      "median_seconds": 0.0027982000028714538,
+      "peak_tracked_bytes": 537225,
+      "retained_bytes": 170440
+    },
+    {
+      "stage": "end_to_end",
+      "n": 2000,
+      "workload": "mixed",
+      "processed": 6000,
+      "k_history": [
+        1.4625,
+        1.3835,
+        1.42
+      ],
+      "status": "incomplete",
+      "seconds": [
+        0.008087700000032783,
+        0.00953420001314953,
+        0.008039000036660582
+      ],
+      "median_seconds": 0.008087700000032783,
+      "peak_tracked_bytes": 857477,
+      "retained_bytes": 93000
+    },
+    {
+      "stage": "generation",
+      "n": 2000,
+      "workload": "fission",
+      "processed": 2000,
+      "status": "complete",
+      "counts": {
+        "fission": 2000,
+        "absorption": 0,
+        "leak": 0,
+        "unfinished": 0
+      },
+      "seconds": [
+        0.0027873999788425863,
+        0.002585700014606118,
+        0.002637099998537451
+      ],
+      "median_seconds": 0.002637099998537451,
+      "peak_tracked_bytes": 838813,
+      "retained_bytes": 287276
+    },
+    {
+      "stage": "end_to_end",
+      "n": 2000,
+      "workload": "fission",
+      "processed": 6000,
+      "k_history": [
+        2.43,
+        2.43,
+        2.43
+      ],
+      "status": "complete",
+      "seconds": [
+        0.03142899996601045,
+        0.011448499979451299,
+        0.00951319996966049
+      ],
+      "median_seconds": 0.011448499979451299,
+      "peak_tracked_bytes": 1299321,
+      "retained_bytes": 152692
+    },
+    {
+      "stage": "generation",
+      "n": 2000,
+      "workload": "absorption",
+      "processed": 2000,
+      "status": "complete",
+      "counts": {
+        "fission": 0,
+        "absorption": 2000,
+        "leak": 0,
+        "unfinished": 0
+      },
+      "seconds": [
+        0.0003606000100262463,
+        0.00033489998895674944,
+        0.00032809999538585544
+      ],
+      "median_seconds": 0.00033489998895674944,
+      "peak_tracked_bytes": 158164,
+      "retained_bytes": 2839
+    },
+    {
+      "stage": "end_to_end",
+      "n": 2000,
+      "workload": "absorption",
+      "processed": 2000,
+      "k_history": [
+        0.0
+      ],
+      "status": "complete",
+      "seconds": [
+        0.0008586000185459852,
+        0.0008099999977275729,
+        0.0008174000540748239
+      ],
+      "median_seconds": 0.0008174000540748239,
+      "peak_tracked_bytes": 271192,
+      "retained_bytes": 4021
+    },
+    {
+      "stage": "generation",
+      "n": 2000,
+      "workload": "leak",
+      "processed": 2000,
+      "status": "complete",
+      "counts": {
+        "fission": 0,
+        "absorption": 0,
+        "leak": 2000,
+        "unfinished": 0
+      },
+      "seconds": [
+        0.0004891999997198582,
+        0.00047279999125748873,
+        0.00046829995699226856
+      ],
+      "median_seconds": 0.00047279999125748873,
+      "peak_tracked_bytes": 158164,
+      "retained_bytes": 2839
+    },
+    {
+      "stage": "end_to_end",
+      "n": 2000,
+      "workload": "leak",
+      "processed": 2000,
+      "k_history": [
+        0.0
+      ],
+      "status": "complete",
+      "seconds": [
+        0.0008784999954514205,
+        0.0010725999600254,
+        0.0008590000215917826
+      ],
+      "median_seconds": 0.0008784999954514205,
+      "peak_tracked_bytes": 271192,
+      "retained_bytes": 4065
+    },
+    {
+      "stage": "secondary_with_wrapper",
+      "n": 2000,
+      "workload": "fission",
+      "secondary": 4860,
+      "seconds": [
+        0.0022386000491678715,
+        0.002091399976052344,
+        0.0019235999789088964
+      ],
+      "median_seconds": 0.002091399976052344,
+      "peak_tracked_bytes": 682725,
+      "retained_bytes": 283692
+    },
+    {
+      "stage": "generation",
+      "n": 10000,
+      "workload": "scatter",
+      "processed": 10000,
+      "status": "incomplete",
+      "counts": {
+        "fission": 0,
+        "absorption": 0,
+        "leak": 0,
+        "unfinished": 10000
+      },
+      "seconds": [
+        0.009487399947829545,
+        0.008905700000468642,
+        0.010323600028641522
+      ],
+      "median_seconds": 0.009487399947829545,
+      "peak_tracked_bytes": 774164,
+      "retained_bytes": 2839
+    },
+    {
+      "stage": "end_to_end",
+      "n": 10000,
+      "workload": "scatter",
+      "processed": 10000,
+      "k_history": [
+        0.0
+      ],
+      "status": "incomplete",
+      "seconds": [
+        0.010625700000673532,
+        0.011646299972198904,
+        0.013176799984648824
+      ],
+      "median_seconds": 0.011646299972198904,
+      "peak_tracked_bytes": 1335192,
+      "retained_bytes": 4065
+    },
+    {
+      "stage": "generation",
+      "n": 10000,
+      "workload": "mixed",
+      "processed": 10000,
+      "status": "incomplete",
+      "counts": {
+        "fission": 5758,
+        "absorption": 4239,
+        "leak": 0,
+        "unfinished": 3
+      },
+      "seconds": [
+        0.011868599976878613,
+        0.013100899988785386,
+        0.01186769997002557
+      ],
+      "median_seconds": 0.011868599976878613,
+      "peak_tracked_bytes": 2621841,
+      "retained_bytes": 815824
+    },
+    {
+      "stage": "end_to_end",
+      "n": 10000,
+      "workload": "mixed",
+      "processed": 30000,
+      "k_history": [
+        1.4174,
+        1.4225,
+        1.4103
+      ],
+      "status": "incomplete",
+      "seconds": [
+        0.040850400051567703,
+        0.039805500011425465,
+        0.03800910001154989
+      ],
+      "median_seconds": 0.039805500011425465,
+      "peak_tracked_bytes": 4244801,
+      "retained_bytes": 428640
+    },
+    {
+      "stage": "generation",
+      "n": 10000,
+      "workload": "fission",
+      "processed": 10000,
+      "status": "complete",
+      "counts": {
+        "fission": 10000,
+        "absorption": 0,
+        "leak": 0,
+        "unfinished": 0
+      },
+      "seconds": [
+        0.014062300033401698,
+        0.014051100006327033,
+        0.013826699985656887
+      ],
+      "median_seconds": 0.014051100006327033,
+      "peak_tracked_bytes": 4168009,
+      "retained_bytes": 1412440
+    },
+    {
+      "stage": "end_to_end",
+      "n": 10000,
+      "workload": "fission",
+      "processed": 30000,
+      "k_history": [
+        2.43,
+        2.43,
+        2.43
+      ],
+      "status": "complete",
+      "seconds": [
+        0.0535160000436008,
+        0.05151489999843761,
+        0.06030000001192093
+      ],
+      "median_seconds": 0.0535160000436008,
+      "peak_tracked_bytes": 6457693,
+      "retained_bytes": 728792
+    },
+    {
+      "stage": "generation",
+      "n": 10000,
+      "workload": "absorption",
+      "processed": 10000,
+      "status": "complete",
+      "counts": {
+        "fission": 0,
+        "absorption": 10000,
+        "leak": 0,
+        "unfinished": 0
+      },
+      "seconds": [
+        0.001451499992981553,
+        0.0010647000162862241,
+        0.001116700004786253
+      ],
+      "median_seconds": 0.001116700004786253,
+      "peak_tracked_bytes": 774164,
+      "retained_bytes": 2839
+    },
+    {
+      "stage": "end_to_end",
+      "n": 10000,
+      "workload": "absorption",
+      "processed": 10000,
+      "k_history": [
+        0.0
+      ],
+      "status": "complete",
+      "seconds": [
+        0.0022110999561846256,
+        0.0018284000107087195,
+        0.0017092999769374728
+      ],
+      "median_seconds": 0.0018284000107087195,
+      "peak_tracked_bytes": 1335192,
+      "retained_bytes": 4065
+    },
+    {
+      "stage": "generation",
+      "n": 10000,
+      "workload": "leak",
+      "processed": 10000,
+      "status": "complete",
+      "counts": {
+        "fission": 0,
+        "absorption": 0,
+        "leak": 10000,
+        "unfinished": 0
+      },
+      "seconds": [
+        0.002183099975809455,
+        0.0010485000093467534,
+        0.000942799961194396
+      ],
+      "median_seconds": 0.0010485000093467534,
+      "peak_tracked_bytes": 774164,
+      "retained_bytes": 2839
+    },
+    {
+      "stage": "end_to_end",
+      "n": 10000,
+      "workload": "leak",
+      "processed": 10000,
+      "k_history": [
+        0.0
+      ],
+      "status": "complete",
+      "seconds": [
+        0.0025549999554641545,
+        0.002239599998574704,
+        0.0019023999921046197
+      ],
+      "median_seconds": 0.002239599998574704,
+      "peak_tracked_bytes": 1335192,
+      "retained_bytes": 4065
+    },
+    {
+      "stage": "secondary_with_wrapper",
+      "n": 10000,
+      "workload": "fission",
+      "secondary": 24300,
+      "seconds": [
+        0.011643700010608882,
+        0.010669599985703826,
+        0.007787099981214851
+      ],
+      "median_seconds": 0.010669599985703826,
+      "peak_tracked_bytes": 3398885,
+      "retained_bytes": 1408812
+    },
+    {
+      "stage": "generation",
+      "n": 20000,
+      "workload": "scatter",
+      "processed": 20000,
+      "status": "incomplete",
+      "counts": {
+        "fission": 0,
+        "absorption": 0,
+        "leak": 0,
+        "unfinished": 20000
+      },
+      "seconds": [
+        0.02337370003806427,
+        0.026367000013124198,
+        0.019092899980023503
+      ],
+      "median_seconds": 0.02337370003806427,
+      "peak_tracked_bytes": 1544164,
+      "retained_bytes": 2839
+    },
+    {
+      "stage": "end_to_end",
+      "n": 20000,
+      "workload": "scatter",
+      "processed": 20000,
+      "k_history": [
+        0.0
+      ],
+      "status": "incomplete",
+      "seconds": [
+        0.020417399995494634,
+        0.020541800011415035,
+        0.019705999991856515
+      ],
+      "median_seconds": 0.020417399995494634,
+      "peak_tracked_bytes": 2665192,
+      "retained_bytes": 4065
+    },
+    {
+      "stage": "generation",
+      "n": 20000,
+      "workload": "mixed",
+      "processed": 20000,
+      "status": "incomplete",
+      "counts": {
+        "fission": 11710,
+        "absorption": 8277,
+        "leak": 0,
+        "unfinished": 13
+      },
+      "seconds": [
+        0.023458900046534836,
+        0.026428000011947006,
+        0.024929799954406917
+      ],
+      "median_seconds": 0.024929799954406917,
+      "peak_tracked_bytes": 5306641,
+      "retained_bytes": 1652944
+    },
+    {
+      "stage": "end_to_end",
+      "n": 20000,
+      "workload": "mixed",
+      "processed": 60000,
+      "k_history": [
+        1.40765,
+        1.40365,
+        1.41255
+      ],
+      "status": "incomplete",
+      "seconds": [
+        0.12268369999947026,
+        0.13821300002746284,
+        0.11274160002358258
+      ],
+      "median_seconds": 0.12268369999947026,
+      "peak_tracked_bytes": 8462949,
+      "retained_bytes": 843216
+    },
+    {
+      "stage": "generation",
+      "n": 20000,
+      "workload": "fission",
+      "processed": 20000,
+      "status": "complete",
+      "counts": {
+        "fission": 20000,
+        "absorption": 0,
+        "leak": 0,
+        "unfinished": 0
+      },
+      "seconds": [
+        0.06019490002654493,
+        0.0445723999873735,
+        0.05592490005074069
+      ],
+      "median_seconds": 0.05592490005074069,
+      "peak_tracked_bytes": 8331049,
+      "retained_bytes": 2818840
+    },
+    {
+      "stage": "end_to_end",
+      "n": 20000,
+      "workload": "fission",
+      "processed": 60000,
+      "k_history": [
+        2.43,
+        2.43,
+        2.43
+      ],
+      "status": "complete",
+      "seconds": [
+        0.08832659997278824,
+        0.09560760000022128,
+        0.09112100000493228
+      ],
+      "median_seconds": 0.09112100000493228,
+      "peak_tracked_bytes": 12907133,
+      "retained_bytes": 1448792
+    },
+    {
+      "stage": "generation",
+      "n": 20000,
+      "workload": "absorption",
+      "processed": 20000,
+      "status": "complete",
+      "counts": {
+        "fission": 0,
+        "absorption": 20000,
+        "leak": 0,
+        "unfinished": 0
+      },
+      "seconds": [
+        0.002035799960140139,
+        0.0015832000062800944,
+        0.0015208999975584447
+      ],
+      "median_seconds": 0.0015832000062800944,
+      "peak_tracked_bytes": 1544164,
+      "retained_bytes": 2839
+    },
+    {
+      "stage": "end_to_end",
+      "n": 20000,
+      "workload": "absorption",
+      "processed": 20000,
+      "k_history": [
+        0.0
+      ],
+      "status": "complete",
+      "seconds": [
+        0.004124099970795214,
+        0.0033007999882102013,
+        0.0035997999948449433
+      ],
+      "median_seconds": 0.0035997999948449433,
+      "peak_tracked_bytes": 2665192,
+      "retained_bytes": 4065
+    },
+    {
+      "stage": "generation",
+      "n": 20000,
+      "workload": "leak",
+      "processed": 20000,
+      "status": "complete",
+      "counts": {
+        "fission": 0,
+        "absorption": 0,
+        "leak": 20000,
+        "unfinished": 0
+      },
+      "seconds": [
+        0.0019444000208750367,
+        0.0018597000162117183,
+        0.0016974000027403235
+      ],
+      "median_seconds": 0.0018597000162117183,
+      "peak_tracked_bytes": 1544164,
+      "retained_bytes": 2839
+    },
+    {
+      "stage": "end_to_end",
+      "n": 20000,
+      "workload": "leak",
+      "processed": 20000,
+      "k_history": [
+        0.0
+      ],
+      "status": "complete",
+      "seconds": [
+        0.004538899986073375,
+        0.0035306999925523996,
+        0.003406299976631999
+      ],
+      "median_seconds": 0.0035306999925523996,
+      "peak_tracked_bytes": 2665192,
+      "retained_bytes": 4065
+    },
+    {
+      "stage": "secondary_with_wrapper",
+      "n": 20000,
+      "workload": "fission",
+      "secondary": 48600,
+      "seconds": [
+        0.019497100031003356,
+        0.029589699988719076,
+        0.02241229999344796
+      ],
+      "median_seconds": 0.02241229999344796,
+      "peak_tracked_bytes": 6794085,
+      "retained_bytes": 2815212
+    }
+  ]
+}

@@ -68,15 +68,15 @@ establish scientific accuracy or reactor validity.
 - `gui.py`: background execution, polling, controls, cancellation, safe rendering,
   bounded heatmap construction, configuration snapshot, `show=False` test support.
 - `simulation_worker.py`: worker lifecycle and result communication.
-- `test_stability_v02.py`: pytest stability, memory, reproducibility and GUI tests.
-- `benchmark_v02.py`: repeatable before/after synthetic benchmark from a Git revision.
-- `benchmark_v02_results.json`, `benchmark_v02_large.json`: raw measurements.
-- `verification_gui_v02.png`: rendered existing GUI panels, visually inspected.
+- `tests/test_stability.py`: pytest stability, memory, reproducibility and GUI tests.
+- `benchmarks/benchmark_generation.py`: repeatable before/after synthetic benchmark from a Git revision.
+- `benchmarks/results/benchmark_v02_results.json`, `benchmarks/results/benchmark_v02_large.json`: raw measurements.
+- `docs/verification_gui_v02.png`: rendered existing GUI panels, visually inspected.
 - `README.md`: usage, modes, compatibility changes and reproducibility limits.
 - `DEBUG_REPORT_v0.2.md`: this report.
 
 `main.py`, `numba_compat.py`, the legacy file and the previous regression tests are
-unchanged. A staged `verification_gui.png` already existed before this work and was
+unchanged. A staged `docs/verification_gui.png` already existed before this work and was
 left untouched. Temporary implementation scripts and the working baseline copy
 were removed. No dependencies were added.
 
@@ -88,10 +88,10 @@ Numba 0.67.0, pytest 9.1.1.
 Commands:
 
 ```text
-python -m compileall -q main.py gui.py physics.py material.py neutron.py numba_compat.py simulation_worker.py test_generation_stats.py test_stability_v02.py benchmark_v02.py
+python -m compileall -q main.py gui.py physics.py material.py neutron.py numba_compat.py simulation_worker.py tests/test_physics.py tests/test_stability.py benchmarks/benchmark_generation.py
 python -m pytest -q
-python benchmark_v02.py --revision 8f7ab377f96c14af70188fcf5c3a20b102fcbdc4
-python benchmark_v02.py --mode performance --large
+python -m benchmarks.benchmark_generation --revision 8f7ab377f96c14af70188fcf5c3a20b102fcbdc4
+python -m benchmarks.benchmark_generation --mode performance --large
 ```
 
 The full pytest suite passes **36 tests and 2 subtests**, with no outstanding test

@@ -1,0 +1,1 @@
+﻿{"mode": "performance", "n": 100000, "steps": 60, "seconds": 0.9614007999771275, "peak_tracked_mib": 11.924171447753906, "retained_tracked_mib": 4.9615936279296875, "recorded_trajectories": 0, "outcome_counts": [100000, 0, 0, 0], "position_sum": [-300.53572427975195, -445.313227473662, 101669.754374909], "process_peak_working_set_mib": 174.96875}

@@ -1,61 +1,48 @@
 # HeliosMC
 
-Launch the modular Matplotlib application from this directory:
+HeliosMC is an educational Python simulator for Monte Carlo neutron transport. It models particle histories, material interactions, generation statistics, and a Matplotlib interface for inspecting simulation results. It is intended for learning and software experimentation; it is not a validated reactor-design or safety-analysis tool.
 
-```sh
-python main.py
+## Run
+
+Install the approved dependencies listed in `requirements.txt` when that file is present, then launch the GUI from the project root:
+
+```powershell
+py main.py
 ```
 
-Requires NumPy and Matplotlib. Numba is optional; `numba_compat.py` keeps the
-Python fallback available. Select the intended Python interpreter in VS Code,
-then use the **NeutronMC** launch configuration.
+Numba is optional. When it is unavailable, `numba_compat.py` provides the Python execution fallback.
 
-## Module relationships
+## Project modules
 
-- `main.py`: application startup; initializes `gui.NeutronSimGUI`.
-- `gui.py`: Matplotlib controls, trajectories, heatmap, k history and balance chart;
-  imports `physics.estimate_k_full` and `material.MATERIALS`.
-- `physics.py`: distance/reaction sampling, scattering, batch transport,
-  generation orchestration and k estimation; imports materials and Numba compatibility.
-- `material.py`: `Material`, its cross-section/mean-free-path methods and the
-  existing `MATERIALS` library. Constants are unchanged.
-- `neutron.py`: standalone `Neutron` model with movement/scattering methods;
-  retained for single-particle use. The batch engine operates on arrays.
-- `numba_compat.py`: optional JIT decorator and availability flag.
-- `NSPM MCNP 3000.py`: unchanged legacy backup containing duplicate definitions.
-  The modular application does not import or execute it.
+- `main.py` starts the application.
+- `physics.py` handles transport, fission source generation, generation statistics, and the existing multiplication estimate.
+- `material.py` defines material properties and the built-in material library.
+- `neutron.py` contains the standalone single-particle representation; the main batch transport path uses NumPy arrays.
+- `gui.py` presents simulation controls, plots, and completion status.
+- `simulation_worker.py` runs simulations outside the GUI event loop.
+- `numba_compat.py` enables optional Numba acceleration and the Python fallback.
 
-The extracted modules already contained the model and GUI. The missing entry point
-and discarded aggregate results were repaired without replacing the transport model.
-Dependencies run from startup to GUI to physics/materials; no module imports startup.
+## Results and limitations
 
-## Generation results
+The generation ratio retains its established definition: fission production divided by the number of histories transported in that generation. Histories that reach the step limit remain in that denominator and are reported separately as unfinished. Results with unfinished histories are marked incomplete and should not be interpreted as a settled physical estimate. The code and regression tests do not establish physical validity.
 
-`run_generation_batch` returns the existing seven values followed by an eighth
-`outcome_counts` dictionary: `fission`, `absorption`, `leak`, `unfinished`.
-Its optional `max_steps` defaults to the original 500. A fate of -1 means the
-particle reached the step limit without a terminal outcome.
+Seeded runs are reproducible within a fixed backend and software environment. Exact random sequences are not guaranteed across Python, NumPy, Numba, platform, or backend changes.
 
-`estimate_k_full` retains its previous result keys and callback signature, and adds
-`generation_stats`, aligned with `k_history`. Each entry contains `processed` and
-`outcome_counts`. The four counts must sum to `processed`; an inconsistency raises
-an error. This counts the actual population transported in each generation before
-secondary-source population control.
+## Tests
 
-`path_frames` remains a visualization sample of at most 40 trajectories per
-generation. The histogram reads only `generation_stats`, including unfinished
-particles labelled **не завершены**. Trajectory sampling does not determine counts.
+Run the automated tests from the project root:
 
-## Verification
-
-```sh
-python -m unittest -v test_generation_stats
-python -m compileall -q .
+```powershell
+py -m pytest -q
 ```
 
-Tests cover mixed outcomes above the sample limit, zero/one transport steps,
-unfinished labels, empty batches, multi-generation accounting and Matplotlib
-histogram rendering independent of sampled paths. The suite uses the Agg backend.
-`verification_gui.png` is a rendered simulation preview.
+## Benchmarks and documentation
 
-These checks verify software behavior; they do not establish physical validation.
+Benchmark scripts are in `benchmarks/`; run them as modules from the project root, for example:
+
+```powershell
+py -m benchmarks.benchmark_transport --variant current --output benchmarks/results/current_numba.json
+py -m benchmarks.benchmark_generation --mode performance --large
+```
+
+Recorded benchmark outputs are in `benchmarks/results/`. Architecture, physics notes, audit records, and performance reports are in `docs/`. See [the performance upgrade report](docs/PERFORMANCE_UPGRADE_REPORT.md) for measured comparisons and limitations.

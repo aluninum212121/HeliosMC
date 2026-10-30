@@ -6,6 +6,9 @@
 """
 
 
+import math
+
+
 class Material:
     def __init__(self, name, sigma_f, sigma_a, sigma_s, nu, density, molar_mass, color):
         self.name       = name
@@ -17,16 +20,31 @@ class Material:
         self.molar_mass = molar_mass
         self.color      = color        # цвет для визуализации
 
+    def validate(self):
+        for name in ("sigma_f", "sigma_a", "sigma_s", "nu", "density", "molar_mass"):
+            value = getattr(self, name)
+            if not math.isfinite(value) or value < 0:
+                raise ValueError(f"{name} must be finite and nonnegative")
+        if self.density <= 0 or self.molar_mass <= 0 or not math.isfinite(self.sigma_total()) or self.sigma_total() <= 0:
+            raise ValueError("density, molar_mass and total cross section must be positive")
+
     def sigma_total(self):
         # ИСПРАВЛЕНИЕ: Теперь полное сечение включает деление (sigma_f)
         return self.sigma_f + self.sigma_a + self.sigma_s
 
     def macro_total(self):
+        self.validate()
         N = (6.022e23 * self.density) / self.molar_mass
-        return N * self.sigma_total() * 1e-24
+        total = N * self.sigma_total() * 1e-24
+        if not math.isfinite(total) or total <= 0:
+            raise ValueError("macroscopic total must be finite and positive")
+        return total
 
     def mean_free_path(self):
-        return 1.0 / self.macro_total()
+        value = 1.0 / self.macro_total()
+        if not math.isfinite(value) or value <= 0:
+            raise ValueError("mean free path must be finite and positive")
+        return value
 
 
 MATERIALS = {
