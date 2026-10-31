@@ -9,13 +9,16 @@ import types
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--fallback', action='store_true')
+parser.add_argument('--baseline-source', default='benchmarks/results/baseline_physics.txt',
+                    help='Exact pre-change physics.py snapshot to compare')
+parser.add_argument('--output', help='Results path; defaults to the historical confirmation path')
 args = parser.parse_args()
 if args.fallback:
     sys.modules['numba'] = None
 from material import Material
 
 modules = []
-for name, path in [('confirm_baseline', 'benchmarks/results/baseline_physics.txt'),
+for name, path in [('confirm_baseline', args.baseline_source),
                    ('confirm_current', 'physics.py')]:
     module = types.ModuleType(name)
     sys.modules[name] = module
@@ -45,5 +48,5 @@ for workload, xs in [('fission', (1., 0., 0.)), ('absorption', (0., 1., 0.)),
                         current_seconds=samples[1], baseline_median=statistics.median(samples[0]),
                         current_median=statistics.median(samples[1])))
 backend = 'fallback' if args.fallback else 'numba'
-Path(f'benchmarks/results/confirmation_{backend}.json').write_text(json.dumps(records, indent=2))
+Path(args.output or f'benchmarks/results/confirmation_{backend}.json').write_text(json.dumps(records, indent=2))
 print(json.dumps(records, indent=2))

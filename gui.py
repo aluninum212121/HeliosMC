@@ -380,6 +380,12 @@ class NeutronSimGUI:
 
         ax.plot(gens, k_hist, color=self.C["blue"],
                 linewidth=1.5, zorder=3)
+        incomplete_gens = [gen for gen, stats in zip(gens, self.result["generation_stats"])
+                           if stats["outcome_counts"]["unfinished"] > 0]
+        if incomplete_gens:
+            ax.scatter(incomplete_gens, [k_hist[gen - 1] for gen in incomplete_gens],
+                       color=self.C["yellow"], marker="x", s=45, linewidths=1.5,
+                       zorder=6, label="Лимит шагов")
         ax.fill_between(gens, k_hist, 1.0,
                          where=[k > 1 for k in k_hist],
                          color=self.C["orange"], alpha=0.15, zorder=2)
@@ -484,6 +490,7 @@ class NeutronSimGUI:
         kstd = r["k_std"]
         unfinished = sum(s["outcome_counts"]["unfinished"]
                          for s in r["generation_stats"])
+        processed = sum(s["processed"] for s in r["generation_stats"])
         no_estimate = not r["k_history"]
 
         if no_estimate:
@@ -493,7 +500,8 @@ class NeutronSimGUI:
         elif unfinished:
             status_text = "НЕПОЛНЫЙ РЕЗУЛЬТАТ"
             status_color = self.C["yellow"]
-            status_desc = f"Лимит шагов: {unfinished} историй"
+            status_desc = (f"Лимит шагов: {unfinished}/{processed} "
+                           f"({unfinished / processed:.1%})")
         elif k > 1.01:
             status_text  = "НАДКРИТИЧНЫЙ"
             status_color = self.C["orange"]

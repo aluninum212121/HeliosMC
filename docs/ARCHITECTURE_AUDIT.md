@@ -1,5 +1,10 @@
 ﻿# Architecture and performance audit
 
+**Current-state note (2026-10-31):** the original audit below is historical.
+Secondary batching, index-based event storage, the memory guard and incomplete
+result presentation were implemented after that audit. The current material
+boundary and result contract are described in the addendum at the end.
+
 Audit date: 2026-10-29. Scope: all Python files in the workspace, including the legacy program, benchmark and tests. This is a static audit: no source or algorithm changes, dependencies, new tests or new benchmarks. Existing benchmark artifacts are historical evidence, not measurements of proposed changes. **Confirmed** means visible in the code; a **suspected bottleneck** requires profiling and benchmarking.
 
 ## Key findings
@@ -172,3 +177,211 @@ Priority gaps before a layout refactor:
 6. If rendering is measured as limiting, separately evaluate cached histograms and reusable or collection artists, preserving result structures and appearance.
 7. Expand regression and numerical tests with each change; run the full suite and native GUI checks after integration. Repeat paired benchmarks for time, peak memory, correctness and latency. Reject candidates that fail agreed criteria.
 8. Document evidence and unresolved limits. Keep `main.py`, public signatures and return shapes, and legacy behavior compatible unless a separate reviewed migration explicitly authorizes an API change.
+
+## Material boundary and result contract (2026-10-31)
+
+### Current working-tree findings
+
+- `physics.py` imports no GUI/Matplotlib code. Callbacks run on the caller's
+  thread; worker and rendering are outside the engine. Numba receives only arrays
+  and scalars. This separation is preserved.
+- Generation orchestration previously read validation, mean free path, cross
+  sections and nu directly from a mutable material. A callback could change
+  later generations' parameters. No resolved material/configuration record or
+  machine-readable warning list was returned.
+- Positions/directions remain separate float64 `(N,3)` arrays. Conversion of
+  non-float64 input and copies before kernel mutation preserve input ownership.
+  Fission indices become a public list of owning coordinate arrays, then an
+  `(F,3)` generation array. That redundant conversion remains; removing it needs
+  a reviewed return-contract change. Secondary normalization/capping also allocates.
+- Transport still scans the original population and draws for inactive indices.
+  Changing this changes RNG consumption. Full secondaries are built before
+  capping; retained fission/path arrays grow with generations. The existing
+  512 MiB planning guard is not a hard RSS limit.
+- Scattering rotation is duplicated in `Neutron.scatter`, `_scatter_directions`
+  and inline transport. The first accepts angles, the others draw them. Neutron
+  is outside the batch path; its energy has unspecified units and no effect on
+  batch transport. Consolidation would touch the compiled loop; first test
+  numerical equivalence in a separate refactor.
+
+### Material contract
+
+`material.py` owns frozen `TransportData`, `resolve_transport_data(material)`
+and `Material.get_transport_data()`. The adapter accepts an existing Material,
+a provider implementing `get_transport_data() -> TransportData`, a TransportData
+snapshot, or a legacy object with `validate()`, `mean_free_path()` and
+`sigma_f`, `sigma_a`, `sigma_s`, `nu`. Legacy adaptation is centralized.
+
+`estimate_k_full` resolves once before source allocation and passes the snapshot
+to every generation. Direct `run_generation_batch` resolves once per call.
+The snapshot validates finite nonnegative channels/nu and a positive finite total
+and mean free path; an invalid provider return type fails before transport.
+Only numeric fields enter the unchanged kernel. Public simulation signatures,
+Material fields/methods, tuple lengths and existing result keys are preserved.
+Mutating a source material after resolution no longer changes later generations;
+providers must themselves read their source safely.
+
+| Snapshot field | Contract |
+| --- | --- |
+| `sigma_f`, `sigma_a`, `sigma_s` | Microscopic barns, common normalization/state; `sigma_a` excludes fission. |
+| `nu` | Dimensionless multiplicity used by the existing truncation rule. |
+| `mean_free_path` | Positive cm, consistent with cross sections/number density; the provider is responsible for this consistency. |
+| `name`, `data_source` | String identifiers: `constant_parameters`, `legacy_material` or provider-supplied source ID. These do not certify provenance. |
+
+Material retains `N = 6.022e23 * density / molar_mass`,
+`Sigma_t = N * (sigma_f + sigma_a + sigma_s) * 1e-24`, `lambda = 1/Sigma_t`.
+Density is g/cm^3 and molar mass g/mol. Preset constants/arithmetic are unchanged;
+their energy, temperature and evaluation provenance remain unknown. A provider
+can supply explicitly reduced constants. This boundary does not evaluate tables
+at individual particle energies/temperatures.
+
+### Result contract and physical meaning
+
+All previous fields remain. Added `processed_histories` sums transported histories
+across generations, not unique physical neutrons. Per generation and aggregate,
+`completed + step_limited = processed`; completed means fission, absorption or
+leakage. `outcome_counts.unfinished` remains the step-limit count.
+Execution success and history completeness are independent. No secondary source
+with unresolved histories does not prove physical extinction. Cancellation and
+errors still raise, without returning completed partial results.
+
+`warnings` contains stable codes in this order when applicable:
+
+- `step_limit_reached`: any generation has unfinished histories.
+- `no_estimate`: no ratio was calculated; legacy zero summaries are placeholders.
+- `burnin_not_applied`: nonzero burn-in requested but too few generations; the
+  compatible fallback uses all available ratios. Omitted when there is no estimate.
+
+`estimator` names `source_production_ratio`, records its definition and
+`validated_keff=False`, zero-based `active_generation_start`,
+`active_generation_count`, and `std_kind="population_standard_deviation"`.
+The unchanged formula is `k_g = int(F_g * nu) / N_g` before capping; `N_g` includes
+unfinished histories. Dropping those histories changes the estimator. Burn-in
+uses the tail only with more than `n_burnin` generations, otherwise all ratios.
+`k_std` is not a standard error or validated uncertainty and does not account for
+generation correlation or establish convergence.
+
+`run_info` records population/generation/burn-in/sample/step/budget settings,
+radius in cm, seed, backend, Python/NumPy/Numba versions and an independent
+dictionary of resolved material fields. No GUI objects or timing enter this
+deterministic record. `seed=None` does not capture the entropy needed for replay;
+callback effects and external state are not captured. This is not a full
+experiment archive. GUI still consumes existing generation statistics; headless
+callers now receive warnings as well. Complete-run GUI criticality labels and
+hints remain educational heuristics.
+
+The model remains a homogeneous sphere with a central initial source, constant
+one-group cross sections, no batch energy/weight/temperature, and only fission,
+non-fission absorption, scatter and leakage. Free paths retain
+`-lambda*log(U+1e-15)` and its numerical offset. Leakage is checked after the full
+flight, so plotted endpoints can lie outside the sphere; boundary intersection
+is not computed. Scattering uses uniform mu/azimuth without energy transfer;
+source directions use normalized Gaussians. Secondary count is `int(F*nu)` with
+uniformly selected fission sites and subsequent uniform capping. These assumptions
+and preset data are not physically validated by software tests.
+
+### Next processed-data/ENDF and surrogate stage
+
+1. Specify a processed-data schema and reference fixtures: isotope/composition,
+   number density, energy unit/grid, channel units, nu, temperature,
+   evaluation/release, processing settings and content ID. Separate fission from
+   non-fission absorption; validate grid order, shapes, finite/nonnegative values
+   and channel accounting. Use approved dependencies; raw ENDF parsing is outside
+   this change.
+2. Review whether the next model uses explicit one-group reduction or energy
+   dependence. A reduction must document weighting and applicability, then return
+   TransportData with traceable source ID. Do not silently sample at an arbitrary
+   energy to fit the current model.
+3. Energy dependence needs a separate physical/kernel/API design: energy arrays,
+   source/outgoing spectra, temperature, interpolation/out-of-range policy, and
+   collision-dependent cross sections/nu. Resolve validated contiguous NumPy
+   tables outside Numba and pass numeric arrays into the kernel; preserve the
+   constant path for regression. These substantive changes are not implemented.
+4. Define independent reference problems and acceptance tolerances for processing,
+   interpolation, reaction rates/spectra and estimator/convergence. Agreement with
+   the educational implementation alone does not validate the new physics.
+5. Before ML, define training/validation cases and input/output schemas using
+   resolved data IDs, parameters, estimator identity, completeness and uncertainty
+   semantics. Keep training/inference outside transport. Current metadata provides
+   a boundary; no speculative surrogate interface or dependency is introduced.
+
+### Executed checks
+
+Before editing, the working tree passed 83 tests and 2 subtests with Numba
+(Python 3.14.4, NumPy 2.4.4, Numba 0.67.0, Matplotlib 3.10.9, pytest 9.1.1).
+The baseline is an exact temporary snapshot including the pre-existing
+uncommitted GUI/test edits, rather than Git HEAD or the older performance
+baseline. Final checks and paired benchmark results follow below.
+
+- Full suite after changes: **96 passed, 2 subtests passed** with Numba in
+  37.71 s, and the same **96 passed, 2 subtests passed** with Numba disabled in
+  320.00 s. New boundary tests also passed on the final source: 13 passed,
+  47 deselected in 9.44 s. No dependencies were installed.
+- The full fallback run used a fresh interpreter with `sys.modules['numba']=None`
+  before importing pytest/physics. Both runs used `pytest -q -p no:cacheprovider`
+  and temporary pytest directories outside the repository.
+- An additional temporary compatibility harness ran seven seeded cases in each
+  backend: mixed, pure fission, pure absorption, one-step limit, zero steps,
+  empty source and zero generations. Every pre-existing result field, including
+  arrays/paths/counts and termination state, matched the exact pre-change snapshot
+  in that backend; repeated final-source runs matched exactly as well.
+- Across backends those seven cases had identical counts, ratios, fates, warnings
+  and coordinates (maximum coordinate difference 0; checked at rtol/atol 1e-12).
+  This is evidence for those fixtures, not a cross-version/backend guarantee.
+- Existing Agg tests exercised GUI rendering, background execution, overlapping
+  launches, cancellation, worker/render failures, close and restart. A separate
+  native TkAgg event-loop test was attempted but failed during Tk initialization:
+  `TclError: Can't find a usable init.tcl`. The installed Python's Tcl/Tk runtime
+  could not initialize; native interaction/latency was therefore not verified.
+  No environment repair or installation was performed.
+
+For performance, the existing `benchmark_confirmation.py` now accepts optional
+`--baseline-source` and `--output` arguments while preserving its defaults and
+record structure. This reuses the existing harness and avoids overwriting older
+results. The baseline physics SHA256 is
+`9467d851447ea28b61b86f9989fba99aec95da99fe06ed61958675fe4da09194`;
+the final source SHA256 is
+`577e50040633acb9a30771ad6addf8e96a49e7a0d43b7f823767a2df80b87a8d`.
+The baseline physics matches `2802f99:physics.py` after newline normalization;
+its mutable Material methods
+retain their original arithmetic in both variants. The benchmark is a warmed
+three-generation run, N=20,000, radius=1e9 cm, seed=2026, 8 steps, zero sampled
+paths, two fresh-process batches of five alternating repetitions per
+variant/workload (ten measurements each), without tracing or
+concurrent test/benchmark jobs. Compilation is excluded from timings. Commands:
+
+```text
+<python> -m benchmarks.benchmark_confirmation --baseline-source <pre-change physics.py> --output benchmarks/results/architecture_confirmation_numba.json
+<python> -m benchmarks.benchmark_confirmation --fallback --baseline-source <pre-change physics.py> --output benchmarks/results/architecture_confirmation_fallback.json
+```
+
+Here `<python>` was the directly invoked installed Python 3.14.4 executable;
+the WindowsApps `python`/`py` aliases were unusable in this session.
+
+Both process batches were retained in the two JSON result files; the first five
+array entries are batch 1, the next five batch 2. Combined medians are recomputed
+from all ten values. `batch_medians` preserves each batch summary and
+`paired_ratio_median` is median(after_i / before_i); positive percentage means
+slower. Timing variability is substantial, including opposite directions between
+batches; neither an overall speedup nor a stable performance regression can be
+established from these measurements. For example Numba fission batch medians
+were 113.60 -> 128.56 ms and 217.56 -> 183.40 ms. Pooled medians can also reflect
+between-batch drift, hence paired ratios are shown separately.
+
+| Backend | Workload | Pooled before median, ms | Pooled after median, ms | Median paired change |
+| --- | --- | ---: | ---: | ---: |
+| Numba | fission | 146.308 | 144.449 | +4.84% |
+| Numba | absorption | 6.309 | 6.067 | -3.79% |
+| Numba | mixed | 110.111 | 123.617 | -0.08% |
+| Python | fission | 524.173 | 489.895 | -5.18% |
+| Python | absorption | 136.387 | 127.927 | +4.93% |
+| Python | mixed | 1504.092 | 1506.547 | +5.88% |
+
+All benchmark pairs checked identical k histories and processed/outcome counts.
+Transport/sampling function ASTs and all pre-existing Material method ASTs were
+also checked against the pre-change snapshot and are identical. No new memory
+benchmark was run: the transport arrays were unchanged, while the existing
+memory-budget/ownership/retention tests passed in both backends. The temporary
+baseline, compatibility harnesses and pytest directories were removed after use.
+Only two intentional benchmark JSON artifacts were added; no application modules,
+dependencies or directories were created, and no existing files were deleted.

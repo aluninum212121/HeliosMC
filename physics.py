@@ -7,13 +7,15 @@
   - генерация направлений рассеяния (scatter_directions)
   - транспорт партии нейтронов   (transport_batch)
   - оркестрация поколения        (run_generation_batch)
-  - оценка k_eff по поколениям   (estimate_k_full)
+  - отношение воспроизводства источника по поколениям (estimate_k_full)
 
 Соответствует БЛОКУ 3 исходного монолита NSPM MCNP 3000.py.
 Модель транспорта сохранена; статистика учитывает всё поколение отдельно от выборки путей.
 """
 
 import numpy as np
+import sys
+from dataclasses import asdict
 from enum import IntEnum
 from threading import Lock
 
@@ -65,7 +67,7 @@ def _arrays(positions, directions):
 
 
 from numba_compat import njit, HAS_NUMBA
-from material import MATERIALS
+from material import MATERIALS, resolve_transport_data
 
 
 @njit
@@ -302,15 +304,15 @@ def run_generation_batch(positions, directions, material, radius, max_samples_pe
     and complete outcome counts (including unfinished particles).
     """
     _integer("max_samples_per_gen", max_samples_per_gen)
-    material.validate()
+    data = resolve_transport_data(material)
     rng = np.random.default_rng(seed) if rng is None else rng
 
     # Транспортируем нейтроны
     final_pos, final_dirs, fates, fiss_pts, all_paths = transport_batch(
         positions, directions,
-        material.mean_free_path(),
-        material.sigma_f, material.sigma_a, material.sigma_s,
-        material.nu,
+        data.mean_free_path,
+        data.sigma_f, data.sigma_a, data.sigma_s,
+        data.nu,
         radius,
         max_steps=max_steps, max_samples=max_samples_per_gen, seed=seed,
         max_memory_bytes=max_memory_bytes
@@ -332,7 +334,7 @@ def run_generation_batch(positions, directions, material, radius, max_samples_pe
         raise RuntimeError("Generation outcome counts do not match processed particles")
 
     # Формируем новый источник (вторичные нейтроны)
-    secondary_expectation = float(fissions) * material.nu
+    secondary_expectation = float(fissions) * data.nu
     if not np.isfinite(secondary_expectation):
         raise MemoryError("Secondary population exceeds finite allocation capacity")
     n_secondary = int(secondary_expectation)
@@ -397,6 +399,11 @@ def estimate_k_full(n_gen=30, n_source=150, radius=25.0,
     histories can still interact, so this ratio is incomplete when any remain.
     k_std is a population spread across selected generations, not a standard
     error or a validated physical uncertainty. Cancellation raises, as do failures.
+
+    Material data are resolved once and frozen for the run. Existing result
+    fields are preserved; run_info, estimator and warning codes describe the
+    calculation independently of any GUI. Warning codes are documented in the
+    architecture audit. This is not a validated k_eff estimator.
     """
     for name, value in (("n_gen", n_gen), ("n_source", n_source),
                         ("n_burnin", n_burnin), ("max_steps", max_steps),
@@ -412,7 +419,7 @@ def estimate_k_full(n_gen=30, n_source=150, radius=25.0,
     if material is None:
         material = MATERIALS["U-235 (чистый)"]
 
-    material.validate()
+    data = resolve_transport_data(material)
 
     # Инициализация исходного поколения как массивы
     positions = np.zeros((n_source, 3), dtype=float)
@@ -437,12 +444,12 @@ def estimate_k_full(n_gen=30, n_source=150, radius=25.0,
         (next_pos, next_dirs,
          fiss, abso, leak,
          paths, fpts, counts) = run_generation_batch(
-             positions, directions, material, radius, max_samples_per_gen, max_steps,
+             positions, directions, data, radius, max_samples_per_gen, max_steps,
              rng=rng, seed=int(rng.integers(0, 2**32)),
              max_memory_bytes=(None if max_memory_bytes is None else
                                max_memory_bytes - retained_bytes))
 
-        # k-эффективное = (нейтроны в следующем поколении) / (нейтроны в текущем)
+        # Source-production ratio before capping; not a validated k_eff.
         k = len(next_pos) / max(1, positions.shape[0]) if positions.shape[0] > 0 else 0.0
         k_history.append(k)
         path_frames.append(paths)
@@ -476,6 +483,13 @@ def estimate_k_full(n_gen=30, n_source=150, radius=25.0,
     k_mean = float(np.mean(k_active)) if k_active else 0.0
     k_std = float(np.std(k_active)) if k_active else 0.0
     step_limited = sum(s["step_limited"] for s in generation_stats)
+    warnings = []
+    if step_limited:
+        warnings.append("step_limit_reached")
+    if not k_history:
+        warnings.append("no_estimate")
+    elif n_burnin and len(k_history) <= n_burnin:
+        warnings.append("burnin_not_applied")
 
     return {
         "k_history":   k_history,
@@ -489,6 +503,29 @@ def estimate_k_full(n_gen=30, n_source=150, radius=25.0,
         "histories_complete": step_limited == 0,
         "completed_histories": sum(s["completed"] for s in generation_stats),
         "step_limited_histories": step_limited,
+        "processed_histories": sum(s["processed"] for s in generation_stats),
+        "warnings": warnings,
+        "estimator": {
+            "name": "source_production_ratio",
+            "definition": "int(fissions * nu) / processed, before population control",
+            "validated_keff": False,
+            "active_generation_start": int(n_burnin) if len(k_history) > n_burnin else 0,
+            "active_generation_count": len(k_active),
+            "std_kind": "population_standard_deviation",
+        },
+        "run_info": {
+            "seed": None if seed is None else int(seed),
+            "backend": "numba" if HAS_NUMBA else "python",
+            "python_version": sys.version.split()[0],
+            "numpy_version": np.__version__,
+            "numba_version": getattr(sys.modules.get("numba"), "__version__", None) if HAS_NUMBA else None,
+            "n_gen": int(n_gen), "n_source": int(n_source),
+            "n_burnin": int(n_burnin), "radius_cm": float(radius),
+            "max_steps": int(max_steps),
+            "max_samples_per_gen": int(max_samples_per_gen),
+            "max_memory_bytes": None if max_memory_bytes is None else int(max_memory_bytes),
+            "material": asdict(data),
+        },
         "termination_reason": ("empty_source" if n_source == 0 else
                                "no_generations" if n_gen == 0 else
                                "no_secondary_source" if len(next_pos) == 0 else

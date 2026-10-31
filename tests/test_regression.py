@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 
 import physics
-from material import Material
+from material import Material, TransportData, resolve_transport_data
 from gui import NeutronSimGUI
 from simulation_worker import SimulationWorker, ExecutionState
 
@@ -79,6 +79,10 @@ def test_gui_completeness_classification(steps, source, expected):
         if steps == 0:
             assert 'Оценка может быть неполной' in text
             assert 'ПОДКРИТИЧНЫЙ' not in text
+            assert 'Лимит шагов: 100/100 (100.0%)' in text
+        marked = any(artist.get_label() == 'Лимит шагов'
+                     for artist in app.ax_k.collections)
+        assert marked == (steps == 0)
         app.fig.canvas.draw()
         assert all(t.get_position()[1] > 0 for t in app.ax_stat.texts)
     finally:
@@ -105,6 +109,11 @@ def test_warning_survives_later_complete_generations():
         app.current_gen = 1
         app._update_status_full()
         assert 'НЕПОЛНЫЙ РЕЗУЛЬТАТ' in [t.get_text() for t in app.ax_stat.texts]
+        app._draw_k_chart()
+        markers = [artist for artist in app.ax_k.collections
+                   if artist.get_label() == 'Лимит шагов']
+        assert len(markers) == 1
+        assert markers[0].get_offsets()[:, 0].tolist() == [1]
     finally:
         app._on_close(None)
         plt.close(app.fig)
@@ -248,3 +257,99 @@ def test_transport_event_order_and_owning_public_arrays(baseline):
     assert all(row.shape == (3,) and row.dtype == np.float64 and row.base is None for row in b[3])
     for x, y in zip(saved, b[3]):
         np.testing.assert_array_equal(x, y)
+
+
+def test_material_provider_legacy_and_snapshot_equivalence():
+    mat = material(f=.7, a=.1, s=.2)
+    data = mat.get_transport_data()
+
+    class Provider:
+        def get_transport_data(self):
+            return data
+
+    class LegacyMaterial:
+        sigma_f, sigma_a, sigma_s, nu = mat.sigma_f, mat.sigma_a, mat.sigma_s, mat.nu
+        name = mat.name
+
+        def validate(self):
+            mat.validate()
+
+        def mean_free_path(self):
+            return mat.mean_free_path()
+
+    config = dict(n_gen=3, n_source=100, radius=1e9, seed=43,
+                  n_burnin=1, max_steps=8, max_samples_per_gen=4)
+    reference = physics.estimate_k_full(material=mat, **config)
+    assert data.mean_free_path == mat.mean_free_path()
+    for source in (Provider(), LegacyMaterial(), data):
+        result = physics.estimate_k_full(material=source, **config)
+        for key in ('k_history', 'k_mean', 'k_std', 'generation_stats', 'warnings'):
+            assert result[key] == reference[key]
+        for a, b in zip(result['fiss_frames'], reference['fiss_frames']):
+            np.testing.assert_array_equal(a, b)
+        for a, b in zip(result['path_frames'], reference['path_frames']):
+            for (pa, fa), (pb, fb) in zip(a, b):
+                np.testing.assert_array_equal(pa, pb)
+                assert fa == fb
+
+
+def test_material_data_resolved_once_and_run_metadata_owns_values():
+    mat = material(f=1., s=0., nu=1.)
+    config = dict(n_gen=3, n_source=12, radius=1e9, seed=43, n_burnin=1)
+    reference = physics.estimate_k_full(material=mat, **config)
+    with patch.object(mat, 'get_transport_data', wraps=mat.get_transport_data) as getter:
+        result = physics.estimate_k_full(material=mat, **config,
+            callback=lambda *args: setattr(mat, 'nu', 0.))
+    getter.assert_called_once_with()
+    assert result['k_history'] == reference['k_history'] == [1., 1., 1.]
+    assert result['run_info']['material']['nu'] == 1.
+    assert result['run_info']['material']['data_source'] == 'constant_parameters'
+    assert result['run_info']['seed'] == 43
+    assert result['run_info']['backend'] == ('numba' if physics.HAS_NUMBA else 'python')
+    assert result['estimator']['active_generation_start'] == 1
+    assert result['estimator']['active_generation_count'] == 2
+    assert result['estimator']['validated_keff'] is False
+    assert result['warnings'] == []
+
+
+@pytest.mark.parametrize('changes', [dict(sigma_f=-1.), dict(sigma_a=np.nan),
+    dict(sigma_s=np.inf), dict(sigma_s=0.), dict(nu=-1.), dict(mean_free_path=0.)])
+def test_invalid_transport_data(changes):
+    config = dict(sigma_f=0., sigma_a=0., sigma_s=1., nu=0., mean_free_path=1.)
+    with pytest.raises(ValueError):
+        TransportData(**(config | changes))
+
+
+def test_snapshot_is_immutable_and_invalid_provider_fails_before_transport():
+    from dataclasses import FrozenInstanceError
+
+    data = material().get_transport_data()
+    assert resolve_transport_data(data) is data
+    with pytest.raises(FrozenInstanceError):
+        data.nu = 10.
+
+    class InvalidProvider:
+        def get_transport_data(self):
+            return np.ones((4, 3))
+
+    with patch.object(physics, 'transport_batch', side_effect=AssertionError('transport entered')):
+        with pytest.raises(TypeError, match='must return TransportData'):
+            physics.estimate_k_full(material=InvalidProvider())
+
+
+@pytest.mark.parametrize('config,codes', [
+    (dict(n_source=0), ['no_estimate']),
+    (dict(n_gen=0), ['no_estimate']),
+    (dict(n_gen=1, max_steps=0), ['step_limit_reached', 'burnin_not_applied']),
+    (dict(n_gen=1, max_steps=1), ['burnin_not_applied']),
+])
+def test_run_warning_and_count_contract(config, codes):
+    result = physics.estimate_k_full(material=material(a=1., s=0.), seed=2, **config)
+    assert result['warnings'] == codes
+    assert result['processed_histories'] == sum(s['processed'] for s in result['generation_stats'])
+    assert result['processed_histories'] == (result['completed_histories'] +
+                                             result['step_limited_histories'])
+    assert result['histories_complete'] == ('step_limit_reached' not in codes)
+    assert result['estimator']['active_generation_start'] == 0
+    assert result['estimator']['active_generation_count'] == len(result['k_history'])
+    assert result['estimator']['validated_keff'] is False

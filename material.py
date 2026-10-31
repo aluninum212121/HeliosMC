@@ -7,9 +7,69 @@
 
 
 import math
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class TransportData:
+    """Constant, one-group inputs resolved before entering the transport kernel.
+
+    Cross sections are microscopic barns (absorption excludes fission), the
+    mean free path is in cm, and nu is dimensionless. All channels must use the
+    same material state and normalization. No energy/temperature lookup occurs
+    here. A future data provider must explicitly reduce its data to this model;
+    passing tables to the current kernel is not supported.
+
+    data_source is a caller-supplied identifier, not verified provenance.
+    """
+
+    sigma_f: float
+    sigma_a: float
+    sigma_s: float
+    nu: float
+    mean_free_path: float
+    name: str = "unspecified"
+    data_source: str = "unspecified"
+
+    def __post_init__(self):
+        for field in ("sigma_f", "sigma_a", "sigma_s", "nu", "mean_free_path"):
+            value = float(getattr(self, field))
+            if not math.isfinite(value) or value < 0:
+                raise ValueError(f"{field} must be finite and nonnegative")
+            object.__setattr__(self, field, value)
+        total = self.sigma_f + self.sigma_a + self.sigma_s
+        if not math.isfinite(total) or total <= 0 or self.mean_free_path <= 0:
+            raise ValueError("total cross section and mean_free_path must be positive and finite")
+        if not isinstance(self.name, str) or not isinstance(self.data_source, str):
+            raise TypeError("name and data_source must be strings")
+
+
+def resolve_transport_data(material) -> TransportData:
+    """Accept a snapshot, a get_transport_data() provider, or the legacy API.
+
+    Providers resolve/validate their source outside Numba and return TransportData.
+    The legacy validate()/mean_free_path()/scalar-field contract stays supported.
+    """
+    if isinstance(material, TransportData):
+        return material
+    provider = getattr(material, "get_transport_data", None)
+    if provider is not None:
+        data = provider()
+        if not isinstance(data, TransportData):
+            raise TypeError("get_transport_data() must return TransportData")
+        return data
+    material.validate()
+    return TransportData(material.sigma_f, material.sigma_a, material.sigma_s,
+                         material.nu, material.mean_free_path(),
+                         name=getattr(material, "name", "unspecified"),
+                         data_source="legacy_material")
 
 
 class Material:
+    """Existing constant presets: barns, g/cm^3, g/mol, cm and dimensionless nu.
+
+    Preset values have no validated energy, temperature or evaluation provenance.
+    """
     def __init__(self, name, sigma_f, sigma_a, sigma_s, nu, density, molar_mass, color):
         self.name       = name
         self.sigma_f    = sigma_f
@@ -45,6 +105,12 @@ class Material:
         if not math.isfinite(value) or value <= 0:
             raise ValueError("mean free path must be finite and positive")
         return value
+
+    def get_transport_data(self) -> TransportData:
+        """Freeze the existing formulas and parameters for one simulation run."""
+        return TransportData(self.sigma_f, self.sigma_a, self.sigma_s, self.nu,
+                             self.mean_free_path(), name=self.name,
+                             data_source="constant_parameters")
 
 
 MATERIALS = {

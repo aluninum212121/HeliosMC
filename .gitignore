@@ -1,5 +1,26 @@
+# Python cache
 __pycache__/
-.pytest_cache/
-.venv/
-.test-tmp-*/
 *.py[cod]
+.pytest_cache/
+
+# Virtual environments
+.venv/
+venv/
+
+# Temporary test artifacts
+.test-tmp-*/
+.pytest-tmp-*/
+.coverage
+htmlcov/
+
+# Local environment
+.env
+.env.*
+!.env.example
+
+# Editors
+.vscode/
+.idea/
+
+# Logs
+*.log

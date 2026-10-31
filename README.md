@@ -28,6 +28,14 @@ The generation ratio retains its established definition: fission production divi
 
 Seeded runs are reproducible within a fixed backend and software environment. Exact random sequences are not guaranteed across Python, NumPy, Numba, platform, or backend changes.
 
+Materials are resolved once per run to validated, immutable `TransportData` in
+`material.py`. Existing `Material` objects remain supported; another provider can
+implement `get_transport_data()` to return the same constant one-group inputs.
+This boundary does not implement energy-dependent tables or ENDF processing.
+Results retain their existing fields and also describe the estimator, warnings
+and run configuration. See the [current architecture addendum](docs/ARCHITECTURE_AUDIT.md#material-boundary-and-result-contract-2026-10-31)
+for units, contracts and the next integration steps.
+
 ## Tests
 
 Run the automated tests from the project root:

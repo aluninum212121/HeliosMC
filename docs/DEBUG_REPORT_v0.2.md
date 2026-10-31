@@ -197,3 +197,26 @@ no new retention in the tested scenario; it is not a proof against every leak.
 4. Keep dependency versions recorded with reproducibility-sensitive results and
    expand benchmark repetitions before making general performance claims.
 
+## GUI addendum: unfinished histories (2026-10-30)
+
+The physics result already reported `unfinished` for each generation and the GUI
+already replaced criticality classification with `НЕПОЛНЫЙ РЕЗУЛЬТАТ` whenever
+any generation contained unfinished histories. This update makes the extent and
+location of that condition visible:
+
+- The status panel now shows step-limited histories as `unfinished/processed`
+  with a percentage. `processed` is summed across generations, so this is a
+  fraction of transported histories across generations, not a count of unique
+  neutrons.
+- The k chart marks each generation with unfinished histories using a yellow
+  cross and a `Лимит шагов` legend entry. The mark remains on earlier generations
+  when navigating to a later complete generation.
+- Existing GUI regressions now check the displayed fraction and chart marks for
+  incomplete, complete, empty-source, and mixed-generation cases.
+
+Only `gui.py`, `tests/test_regression.py`, and this existing report were changed
+for this addendum. No files were created or deleted, no dependencies were added,
+and the physics model and estimator were not changed. Verification:
+`py -m pytest -q tests/test_regression.py -k 'gui_completeness_classification or warning_survives_later_complete_generations'`
+passed (4 tests). Native desktop interaction was not exercised in this check.
+

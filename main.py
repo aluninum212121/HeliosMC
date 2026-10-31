@@ -1,4 +1,4 @@
-"""Official entry point for the modular NeutronMC application."""
+"""Official entry point for the modular HeliosMC application."""
 
 from gui import NeutronSimGUI
 from numba_compat import HAS_NUMBA
