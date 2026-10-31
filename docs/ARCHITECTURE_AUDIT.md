@@ -1,5 +1,355 @@
 ﻿# Architecture and performance audit
 
+## Material provenance audit before changes (2026-10-31)
+
+The working tree was clean at `92a5e7d`. Before changing material.py:
+
+- `Material` stores mutable constant microscopic cross sections (barn), nu (1),
+  density (g/cm^3), molar mass (g/mol), name and display color. All four presets
+  are hard coded; no primary scientific reference or applicable energy,
+  temperature, isotopic mixture or averaging spectrum is known. Color is only
+  presentation metadata. Name also appears in run metadata.
+- `sigma_total`, `macro_total` and `mean_free_path` compute derived quantities
+  using the existing rounded Avogadro constant. `get_builtin_dataset` snapshots
+  those quantities together with source constants without describing derivation
+  separately. Presets are labelled educational rather than explicitly legacy.
+- `TransportData` freezes sigma_f, sigma_a (excluding fission), sigma_s, nu and
+  mean_free_path. `resolve_transport_data` resolves one snapshot per run outside
+  JIT. GUI passes Material; worker calls physics; neither is a data-file reader.
+- `MaterialQuantity` checks units, nonnegative finite scalars/immutable vectors
+  and missing/unsupported status. `MaterialDataset` checks identity, normalized
+  atom/mass fractions or stoichiometry, K/eV conventions and scalar/pointwise
+  shapes. Pointwise tables cannot enter the legacy kernel.
+- `resolve_medium_rates` admits only synthetic/educational absorption/scattering
+  rates directly in 1/cm. These are not inferred from nuclear cross sections.
+  `interpolate_synthetic_quantity` uses PCHIP only on synthetic pointwise data.
+- Gaps: no typed processing lineage/state/source uncertainty/validation scope,
+  no source catalog or local file/schema/checksum verification, no protection
+  against presenting a declared data_kind as scientific validation, and the
+  one-group adapter accepts declared experimental/evaluated data without an
+  independently reviewed model mapping. Arrays are checked for software
+  consistency; this is not validation of scientific data or transport physics.
+
+Plan: extend the existing dataclasses with optional grouped metadata, classify
+presets honestly without changing constants/formulas, retain the old transport
+snapshot contract, block unsupported scientific-data adaptation, add an offline
+source registry and a bounded synthetic-only JSON reader. Reuse this document
+for source research, schema specification, test evidence and ML pipeline design.
+No ENDF parser, scientific interpolation policy, transport or GUI changes.
+
+## Material provenance schema and source catalog (2026-10-31)
+
+This section supersedes earlier descriptions of presets as educational records.
+The preceding audit was recorded before code edits. No material constants,
+physical formulas, transport kernels, GUI/worker logic or monolith were changed.
+
+### Schema and compatibility
+
+The existing required/positional constructor fields remain in order. New metadata
+is optional and immutable, using the standard library and existing NumPy:
+
+| Structure | Added information and purpose |
+| --- | --- |
+| `MaterialDataset` | Optional chemical formula, category (`component`, `mixture`, `abstract`, `legacy_preset`, or unspecified), grouped state/origin/quality, actual local-file check |
+| `DataOrigin` | Library/release, HTTPS source URL, primary reference, processing description/software/version, upstream file SHA-256, acquisition date |
+| `MaterialState` | Optional density in g/cm^3, physical state, origin of state parameters, published density/temperature applicability ranges |
+| `DataQuality` | Declared review status/reference, applicability scope, known limitations |
+| `MaterialQuantity` | Optional classification override, origin, source uncertainty, applicability notes; inferred scalar/pointwise/unavailable representation |
+| `ParameterUncertainty` | Absolute or relative **standard** source-parameter uncertainty plus reference; no fabricated default |
+| `LocalDataFile` | Resolved path, observed byte count/hash, optional independent expected hash/reference, supported schema checked, optional recorded acquisition |
+| `DataLibrary` | One source/release/processing variant with organization, format list, terms, documentation URLs, source availability and separate local-file checks |
+
+The original `source`, local `version`, free-text `provenance`, composition,
+temperature, grid and quantity fields remain. `origin.library_version` describes
+the upstream library, not the local dataset revision. Temperature remains on
+MaterialDataset for compatibility, in K; its range lives with state. Density can
+remain an old scalar quantity; if state also specifies it, both must agree exactly.
+No density/temperature law is inferred. Zero density is permitted for an abstract
+vacuum; the unchanged legacy Material transport API still requires positive density.
+
+Composition supports atom fractions, mass fractions (sum 1 within absolute 1e-8,
+without normalization), and positive-total stoichiometric amounts. Components
+must be unique; the `component` category cannot contain multiple components.
+Unknown composition stays None/unknown, including named legacy presets. A formula
+is descriptive text, not a parsed composition or a source of inferred fractions.
+
+`data_kind` distinguishes synthetic, legacy, experimental, evaluated and derived;
+the prior educational label remains supported for existing callers. Quantity kind
+None inherits its dataset classification. A derived quantity/dataset requires a
+processing description; parent identities/revisions and the derivation belong in
+that description/provenance. This is recorded evidence, not proof of its content.
+
+Missing/unsupported quantities retain values=None. Available quantities require
+explicit recognized units and nonnegative finite values; vector storage is owned
+and immutable. The unit vocabulary remains deliberately limited to barn, 1, cm,
+1/cm, g/cm^3 and g/mol; grid energy is eV, temperature K. Other dimensions, signed
+observables, covariance matrices, per-channel grids, discontinuous repeated nodes
+and multigroup structures need a reviewed schema extension. In particular, ENDF
+can encode discontinuities; its raw nodes must not be forced into this strictly
+increasing synthetic-table schema by dropping duplicates.
+
+Source uncertainty is optional: absolute standard uncertainty uses the quantity's
+unit; relative standard uncertainty is a fraction. Shape must match values, with
+no scalar broadcasting to a table. No correlation/independence assumption or
+uncertainty propagation is implemented. State density uncertainty, if known, can
+be recorded on a scalar density quantity; temperature uncertainty has no dedicated
+numeric representation yet and must remain documented/missing until an extension
+is justified. MC intervals stay in simulation results, numerical verification
+errors in verification records, and future ML errors in model-evaluation records.
+They must not be added as though they measured the same uncertainty.
+
+`TransportData` and all its scalar values/fields are unchanged. Material objects
+and explicit caller-created snapshots/providers continue to work. Scientific
+experimental/evaluated/derived MaterialDataset records are storage-only even if
+scalar: no reviewed reduction or model mapping exists. Pointwise records always
+fail before kernel entry. Embedded legacy/experimental/evaluated quantities or declared
+external-library origins also block relabelling such a dataset as synthetic for
+computation. Synthetic/educational scalar fixtures retain the old adapter behavior;
+legacy presets retain it for compatibility. The explicit provider/snapshot API
+cannot authenticate arbitrary caller-supplied numbers; metadata cannot detect
+deliberate mislabelling or prove a cited publication was independently reviewed.
+
+`resolve_medium_rates` still accepts only the two explicit abstract rates in
+1/cm for synthetic/educational scalar layers. PCHIP remains synthetic-only and is
+never automatically applied during loading or transport. No nuclear interpolation,
+one-group averaging, ENDF processing or reaction model is implemented.
+
+All four MATERIALS presets, including water/graphite, keep their exact historical
+numbers and are explicitly legacy/unverified. Their scientific references, energy
+weighting, temperature and detailed composition remain unknown. Their mean free
+path is labelled derived with the existing formula and legacy parent recorded.
+The rounded 6.022e23 and 1e-24 conversion remain unchanged. `Material.color` remains
+GUI-only. `Material.get_transport_data().data_source` stays `constant_parameters`
+for existing API consumers; use dataset metadata for classification.
+
+`require_scientific_reference()` emits UnverifiedDataWarning **and raises** when
+an unverified/legacy/synthetic record is requested as a scientific oracle. A
+scientifically_validated declaration requires a reference and applicability scope;
+legacy/synthetic/educational datasets cannot claim it. Scientific datasets also
+need a primary reference when used as an oracle. This is a metadata gate, not
+automated independent scientific validation, and never grants transport access.
+
+### Official-source research (documentation inspected 2026-10-31)
+
+No numerical libraries, isotope arrays or archives were downloaded. Versions below
+identify inspected offerings, not an assertion that newer means better or sources
+are interchangeable. All five catalog entries have no local files and only
+`known_source` status. `checked_on` records documentation inspection, not a checksum
+verification date. The JSON catalog is a small offline metadata registry; it has
+no network client and is not imported by physics/GUI.
+
+| Library | Observed versions/offering | Organization | Distribution format | Verified documentation URL | Actual status |
+| --- | --- | --- | --- | --- | --- |
+| ENDF/B | VIII.1; VIII.0 and VII.1 also linked | CSEWG; BNL NNDC distributes | ENDF-6 | [NNDC](https://www.nndc.bnl.gov/endf-library/) | Release index readable; no files checked |
+| JEFF | 4.0; older releases including 3.3 linked | OECD NEA Data Bank / JEFF project | ENDF-6; ACE, PENDF, HDF5, GENDF, AMPX processed variants | [NEA release](https://databank.io.oecd-nea.org/data/jeff/40/) | Release/processing table readable; no files checked |
+| JENDL | 5; older 4.0/3.x releases linked | JAEA NDC with JNDC | ENDF-6; pointwise distributions | [JAEA index](https://wwwndc.jaea.go.jp/jendl/jendl.html) | Index and [release description](https://wwwndc.jaea.go.jp/jendl/j5/j5.html) readable; no files checked |
+| OpenMC processed | Selected ENDF/B-VIII.1 / NJOY 2016.78 variant; additional parent libraries listed | OpenMC development team; underlying evaluators remain credited | HDF5, XML index, compressed archive | [OpenMC data](https://openmc.org/data/) | Distribution documentation readable; archive revision/checksum not pinned |
+| EXFOR | Rolling entries/subentries with revisions, not one numbered evaluation release | NRDC under IAEA NDS | Fixed-width EXFOR; JSON/XML/CSV retrieval | [IAEA EXFOR](https://www-nds.iaea.org/exfor/) | Main page yielded no readable content; [API guide](https://nds.iaea.org/exfor/x4guide/API/) and [official repository](https://github.com/IAEA-NDS/exfor_master/blob/main/README.md) readable |
+
+**ENDF/B:** evaluated reaction, distribution, decay and covariance records, not
+direct measurements or a ready-made material mixture. The release and individual
+evaluation references must be retained. The inspected index did not establish an
+artifact redistribution license; catalog license stays None.
+
+**JEFF:** evaluated general-purpose sublibraries and separately processed artifacts.
+The release table documents NJOY2016.78 processing; available temperatures differ
+by format (for example ACE and HDF5 lists differ). The page supplies dataset DOI
+10.82555/e9ajn-a3p20 for citation. A single dataset reuse license was not established
+from the inspected release page, so None is retained and artifact terms need review.
+
+**JENDL:** JAEA documents evaluated neutron/other-projectile, decay, scattering and
+yield sublibraries, plus 0 K and 300 K pointwise offerings. The release asks users
+to cite Iwamoto et al., DOI 10.1080/00223131.2022.2141903. Its errata revision must
+also be pinned. Redistribution license and pointwise processing recipe/version
+were not established from the inspected overview, and are not guessed.
+
+**Shared ENDF-format semantics:** the [ENDF-102 format manual](https://www.nndc.bnl.gov/endfdocs/ENDF-102-2023.pdf)
+defines energies in eV and cross sections in barn. MF1/MT451 contains identification,
+release/revision and bibliographic metadata, with TEMP in K for Doppler-processed
+data; primary evaluations use TEMP=0 as a format convention. It must not be
+interpreted as the material's operating temperature. Resonance reconstruction,
+temperature processing and per-region interpolation conventions need explicit
+lineage. These machine-readable records allow future metadata extraction, but no
+ENDF parser was added. Sharing a format does not make evaluations equivalent.
+
+**OpenMC:** derived distributions preserve the parent library and processing chain
+(ENDF to NJOY-generated ACE to HDF5). Its documented API can read file metadata
+and XML indexes. The selected distribution documents 250/293.6/600/900/1200/2500 K;
+thermal tables follow their source temperature lists. The upstream [HDF5 specification](https://docs.openmc.org/en/latest/io_formats/nuclear_data.html)
+defines file type/version, nuclide identity, energy grids, reaction metadata and
+temperature groups; kT is stored in eV, whereas group labels use rounded K.
+Neither those labels nor library family identify an exact processing artifact.
+Software licensing is not assumed to license every data archive; dataset terms,
+archive hash and processing revision remain to be checked. See also the inspected
+[data API](https://docs.openmc.org/en/latest/pythonapi/data.html).
+
+**EXFOR:** experimental records retain bibliographic references, experimental
+conditions, unit codes and missing sections. Units/temperatures are entry-specific;
+no universal measurement temperature or unit can be inferred. The IAEA API guide
+documents JSON/XML/CSV/text and archived entry revisions. Its documentation was
+read; API responses were not fetched or validated. The official exfor_master README
+states CC BY 4.0 for those master files and requests original publication plus
+entry/subentry/revision citation; that is not a blanket license for all related
+software/products. Any interpreted/converted export needs its processing lineage.
+
+Access limitations: the exact EXFOR landing page was not readable in this tool.
+Supplementary attempts at `/exfor/basics.htm` and JAEA `/jendl/terms.html` and
+`/jendl/j5/JENDL-5_2021.pdf` were inaccessible; no conclusions were drawn from
+those paths. No claim is made that arbitrary guessed paths exist or that their
+access failure proves an entire service unavailable. Dataset-specific license
+and redistribution rights remain unresolved where marked None.
+
+### Catalog and file verification
+
+`load_source_catalog` checks versioned fields/HTTPS URL syntax/date/format lists
+and unique IDs offline. `register_library` rejects duplicate identifiers; use a
+distinct ID for a release or processing variant. A catalog URL is an inert string,
+not authenticated provenance. Schema metadata cannot assert local-file checks.
+Attach a separately obtained `LocalDataFile` explicitly (for example with
+dataclasses.replace) after reading the actual file.
+
+| Claim | Evidence/representation | Does not imply |
+| --- | --- | --- |
+| Known source | Catalog identification and dated documentation inspection | File acquired |
+| Downloaded | Existing local bytes plus explicit recorded acquisition URL/date | Correct checksum, schema or scientific validity |
+| Integrity verified | Actual SHA-256 matches an independent expected SHA-256 with checksum reference | Authentic source if the expected checksum itself is untrusted |
+| Schema validated | Exact supported schema successfully read and structurally checked | Scientific validity or transport compatibility |
+| Scientifically validated | Independent review reference and application scope, still requiring human assessment | Universal applicability or transport support |
+
+`inspect_local_file` streams bytes in 1 MiB chunks, supports arbitrary existing
+regular files, and never parses scientific data. A locally generated synthetic
+file is not called downloaded. Optional acquisition records are caller-provided
+evidence; the function does not authenticate a remote download history. Files can
+change afterward; records describe bytes at inspection time, not permanent state.
+`load_synthetic_table` checks the hash of the same bytes it parses, avoiding a
+separate hash/read race. An observed digest is always recorded; without an
+independent expected digest/reference, integrity_verified remains False.
+
+### Local table contract and format choices
+
+JSON was chosen for small self-describing fixtures using only stdlib + NumPy.
+The reader accepts UTF-8 (optional BOM), a maximum of 2 MiB by default, exact schema
+version/field names, and explicit synthetic classification. Nested duplicate keys,
+NaN/Infinity, invalid/mixed numeric types, absent required fields, unknown fields,
+wrong units, mismatched arrays, unordered/duplicate energies and invalid composition
+are rejected. It never fills missing values, normalizes fractions, converts units,
+evaluates formulas or chooses interpolation. Limits can be explicitly adjusted.
+Schema and file-integrity status are independent; scientific status is never
+granted by the reader. File-controlled local-file check records are forbidden.
+
+Minimal scalar fixture (invented direct rates, not nuclear data):
+
+```json
+{
+  "schema_version": "heliosmc.synthetic-material.v1",
+  "dataset": {
+    "material_id": "example:abstract",
+    "name": "Invented abstract medium",
+    "data_kind": "synthetic",
+    "source": "Mathematical teaching definition, not measurements",
+    "version": "1",
+    "provenance": ["Independent absorption/scattering Poisson rates in 1/cm"],
+    "energy_representation": "one_group",
+    "energy_unit": "eV",
+    "quantities": [
+      {"name": "absorption_rate", "unit": "1/cm", "status": "available", "values": 0.5},
+      {"name": "scattering_rate", "unit": "1/cm", "status": "available", "values": 0.0}
+    ]
+  }
+}
+```
+
+Pointwise fixtures set energy_representation=pointwise and provide energy_grid
+and same-length quantity value arrays. Missing/unsupported quantities use explicit
+status and values=None/omitted. Such tables are storage/interpolation fixtures,
+not executable medium rates. Optional metadata uses the dataclass field names.
+
+| Format | Decision and future requirements |
+| --- | --- |
+| JSON | Implemented synthetic-only v1 reader; adequate for small fixtures and metadata |
+| CSV | Not implemented: needs a versioned sidecar for units, composition, lineage, uncertainty and channel definitions; plain columns are insufficient |
+| NPZ | Not implemented: future numeric-array archive plus JSON manifest; require allow_pickle=False, dtype/shape/key checks, compressed-size limits and byte hashes |
+| HDF5 | Design only: future read-only adapter validates filetype/version/groups, nuclide/reaction identities, energy units and actual kT/temperature metadata before constructing storage records; no implicit transport mapping. No h5py/OpenMC dependency introduced |
+
+Schema extension and reader implementation for real sources need independent
+review, artifact terms, pinned data/processing versions, source-defined grid and
+interpolation semantics, threshold/discontinuity handling and uncertainty/covariance
+representation. They must not reinterpret arbitrary ENDF/HDF5 as this fixture format.
+
+### Proposed Dataset Pipeline v1 (design only)
+
+1. A versioned scenario manifest admits only synthetic/educational direct abstract
+   rates and the mathematically specified slab model. Features are layer rates
+   (1/cm), interface positions (cm), source position/direction and scenario family.
+   Material IDs are identifiers, not substitutes for numeric physical features.
+2. A preflight stage records material schema/version/content hashes, parameter
+   classification, units, missing fields and scenario validity. Exclude legacy,
+   measured/evaluated/derived nuclear records and all multiplying-system outputs.
+3. A runner records algorithm version and code revision, requested/effective seed,
+   RNG/backend/dependency versions, history count/limits and elapsed time. No dataset
+   runner was implemented here. Store numeric arrays separately from a JSON manifest.
+4. Targets are completed-history outcome probabilities/counts from simulate_slab,
+   with MC standard errors/interval methods, censoring reasons and bounds. Censored
+   results must not be relabelled completed-only estimates. Analytic reference
+   residuals are separate mathematical-verification metadata.
+5. Keep source-parameter uncertainty, MC sampling error, numerical verification
+   error and future ML prediction error in distinct named records. Unknown stays
+   unavailable, with a reason; do not assign zeros or merge error budgets implicitly.
+6. Split by scenario family and parameter configurations before training; keep
+   repeat seeds of the same configuration together to limit train/test leakage.
+   Hold out independent reference scenarios, pin preprocessing/features/targets,
+   store split and dataset versions and future model version/metrics. Evaluate
+   calibration and approximation error against independent synthetic checks.
+
+This pipeline design does not make any real-material transport or k_eff claim.
+The legacy one-group model, source generation, isotropic assumptions and unvalidated
+generation ratio remain unchanged. Existing mathematical slab checks establish
+software/model verification only, not scientific validity for real nuclear media.
+
+### Executed verification for material provenance
+
+Baseline before code edits: 126 passed and 2 subtests passed in 91.30 s. Pytest
+reported one inability to write its pre-existing cache directory; no cache was
+deleted. Subsequent runs disable only the pytest cache provider, not any tests.
+Initial focused new-schema run: 79 passed in 21.31 s. Final evidence follows below.
+
+After adding local-file acquisition checks the full suite passed with Numba:
+206 passed and 2 subtests passed in 88.03 s; with Numba import disabled before
+module import: 206 passed and 2 subtests passed in 231.72 s. Final URL/control-byte
+and embedded-legacy checks raised focused coverage to 82 tests (all passed in
+5.28 s). The final full Numba run passed 208 tests and 2 subtests in 31.94 s.
+These are suite durations, not performance benchmarks; no speedup is inferred.
+
+Final full fallback run, with `sys.modules['numba'] = None` before importing
+pytest/application modules: **208 passed, 2 subtests passed in 227.46 s**.
+No failed/skipped tests in either final run. The two subtests are additional to
+the 208 counted test items. Final temporary fixture directories were cleaned by
+their TemporaryDirectory contexts. The new material-data module contains 82
+passing cases; the prior 126 test items remain covered. `git diff --check` and
+a separate whitespace check of all six changed/new files passed.
+
+The original TransportData and Material methods were compared as Python ASTs
+against HEAD and are identical. Physics, GUI, main, worker, Neutron, Numba
+compatibility and the monolith were also checked unchanged (line endings
+normalized). All numeric quantities in the four preset snapshots match HEAD
+exactly. Two independent before/after adapter comparisons of synthetic slab
+scenarios (homogeneous absorption and two-layer scattering/absorption; N=2000,
+seed=2026, backend=python) gave identical outcome counts, statistics, warnings,
+sampled path fates and coordinates.
+
+Full regression tests exercise Agg rendering, GUI completion/failure/cancellation,
+background worker restart/cancel/close, seed reproducibility, backend agreement,
+and old provider/snapshot contracts. Native Tk initialization was actually
+attempted and failed: TclError, missing usable init.tcl under the installed Python
+Tcl directory. Native windows/event-loop behavior therefore remains unverified;
+no environment repair or dependency installation was attempted.
+
+Final full-run fixtures use a task-owned standard-library TemporaryDirectory
+outside the repository, removed on completion. No new production module, deleted
+file, third-party dependency, benchmark output or Git commit/push. Changes are
+material.py, this document, README, the preset-classification regression assertion,
+one new test module and one small source-catalog JSON file.
+
 **Current-state note (2026-10-31):** the original audit below is historical.
 Secondary batching, index-based event storage, the memory guard and incomplete
 result presentation were implemented after that audit. The current material

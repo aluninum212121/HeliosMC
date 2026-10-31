@@ -1,0 +1,75 @@
+{
+  "schema_version": "heliosmc.source-catalog.v1",
+  "libraries": [
+    {
+      "library_id": "endfb-viii.1",
+      "name": "Evaluated Nuclear Data File, ENDF/B",
+      "organization": "CSEWG; distributed by Brookhaven National Laboratory, NNDC",
+      "version": "VIII.1",
+      "source_url": "https://www.nndc.bnl.gov/endf-library/",
+      "data_kind": "evaluated",
+      "formats": ["ENDF-6"],
+      "checked_on": "2026-10-31",
+      "documentation_urls": ["https://www.nndc.bnl.gov/endfdocs/ENDF-102-2023.pdf"],
+      "license": null,
+      "usage_notes": "Release/format documentation inspected. No dataset license established from the inspected pages; check release terms and cite its evaluation/reference. No numerical files downloaded.",
+      "availability_status": "known_source"
+    },
+    {
+      "library_id": "jeff-4.0",
+      "name": "Joint Evaluated Fission and Fusion Library",
+      "organization": "OECD Nuclear Energy Agency Data Bank; JEFF project",
+      "version": "4.0",
+      "source_url": "https://databank.io.oecd-nea.org/data/jeff/40/",
+      "data_kind": "evaluated",
+      "formats": ["ENDF-6", "ACE", "PENDF0K", "HDF5", "GENDF-1102", "AMPX"],
+      "checked_on": "2026-10-31",
+      "documentation_urls": ["https://databank.io.oecd-nea.org/data/jeff/40/"],
+      "license": null,
+      "usage_notes": "Raw and processed distributions differ. Release page requests dataset citation DOI 10.82555/e9ajn-a3p20. Artifact-specific reuse/redistribution terms remain to be checked; no blanket license inferred from website access. No numerical files downloaded.",
+      "availability_status": "known_source"
+    },
+    {
+      "library_id": "jendl-5",
+      "name": "Japanese Evaluated Nuclear Data Library",
+      "organization": "Japan Atomic Energy Agency Nuclear Data Center; JNDC collaboration",
+      "version": "5 (December 2021; pin errata revision separately)",
+      "source_url": "https://wwwndc.jaea.go.jp/jendl/jendl.html",
+      "data_kind": "evaluated",
+      "formats": ["ENDF-6"],
+      "checked_on": "2026-10-31",
+      "documentation_urls": ["https://wwwndc.jaea.go.jp/jendl/j5/j5.html"],
+      "license": null,
+      "usage_notes": "Release page requests O. Iwamoto et al., JENDL-5, DOI 10.1080/00223131.2022.2141903. Reuse/redistribution license was not established from inspected release pages. No numerical files downloaded.",
+      "availability_status": "known_source"
+    },
+    {
+      "library_id": "openmc-endfb-viii.1-njoy2016.78",
+      "name": "OpenMC official processed ENDF/B-VIII.1 data",
+      "organization": "OpenMC development team (processing); CSEWG (underlying evaluation)",
+      "version": "ENDF/B-VIII.1; NJOY 2016.78; archive revision not pinned",
+      "source_url": "https://openmc.org/data/",
+      "data_kind": "derived",
+      "formats": ["HDF5", "XML index", "tar.xz archive"],
+      "checked_on": "2026-10-31",
+      "documentation_urls": ["https://docs.openmc.org/en/latest/pythonapi/data.html", "https://docs.openmc.org/en/latest/io_formats/nuclear_data.html"],
+      "license": null,
+      "usage_notes": "Record parent evaluation AND processing recipe/version; OpenMC software license is not a license for every data archive. Archive revision, checksum and dataset redistribution terms are not verified. No numerical files downloaded.",
+      "availability_status": "known_source"
+    },
+    {
+      "library_id": "exfor",
+      "name": "Experimental Nuclear Reaction Data (EXFOR)",
+      "organization": "International Network of Nuclear Reaction Data Centres (NRDC); IAEA Nuclear Data Section",
+      "version": "Continuously revised; pin entry/subentry revision and snapshot commit",
+      "source_url": "https://www-nds.iaea.org/exfor/",
+      "data_kind": "experimental",
+      "formats": ["EXFOR fixed-width text", "JSON", "XML", "CSV"],
+      "checked_on": "2026-10-31",
+      "documentation_urls": ["https://nds.iaea.org/exfor/x4guide/API/", "https://github.com/IAEA-NDS/exfor_master/blob/main/README.md"],
+      "license": "CC BY 4.0 for IAEA-NDS/exfor_master files, as stated in that repository; not inferred for every associated product",
+      "usage_notes": "Main URL returned no readable page content in the browser tool. IAEA API documentation and official repository README inspected. Cite original publication plus entry/subentry/revision. No API response or numerical file downloaded; API functionality not tested.",
+      "availability_status": "known_source"
+    }
+  ]
+}

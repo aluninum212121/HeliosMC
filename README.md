@@ -28,7 +28,7 @@ The generation ratio retains its established definition: fission production divi
 
 Seeded runs are reproducible within a fixed backend and software environment. Exact random sequences are not guaranteed across Python, NumPy, Numba, platform, or backend changes.
 
-Materials are resolved once per run to validated, immutable `TransportData` in
+Materials are resolved once per run to structurally checked, immutable `TransportData` in
 `material.py`. Existing `Material` objects remain supported; another provider can
 implement `get_transport_data()` to return the same constant one-group inputs.
 This boundary does not implement energy-dependent tables or ENDF processing.
@@ -38,11 +38,29 @@ for units, contracts and the next integration steps.
 
 `MaterialDataset` describes identity, composition, temperature, provenance and
 scalar or pointwise `MaterialQuantity` values with explicit units and availability.
-`get_builtin_dataset(key)` describes an existing preset as educational data,
+`get_builtin_dataset(key)` describes an existing preset as legacy/unverified data,
 without guessing its unknown scientific metadata. Pointwise arrays are checked
 and stored immutably; the current engine rejects them rather than silently
 reducing them. See the [structured material schema](docs/ARCHITECTURE_AUDIT.md#structured-material-data-schema-2026-10-31)
 for an example, validation rules and the proposed future ML dataset manifest.
+
+Material metadata now groups state (`MaterialState`), lineage (`DataOrigin`),
+review scope (`DataQuality`) and optional source-parameter standard uncertainty
+(`ParameterUncertainty`). Unknown values remain `None`. Historical preset numbers
+and `TransportData` are preserved. `require_scientific_reference()` warns and
+rejects unverified records; a declared review is not an automated scientific proof.
+Experimental/evaluated/derived datasets are storage-only, including one-group
+records: no reviewed scientific-data mapping to the old kernel is implemented.
+
+`load_source_catalog()` reads the offline [official-source registry](docs/data_sources.json).
+It performs no downloads. `inspect_local_file()` computes a local SHA-256; integrity
+verification additionally requires an expected hash and its independent reference.
+`load_synthetic_table()` reads bounded local JSON fixtures with schema
+`heliosmc.synthetic-material.v1`, checks units/shapes/missing values/strict energy
+ordering and keeps a file-check record. Only explicit synthetic records are
+accepted. JSON schema validity, byte integrity and scientific validity are distinct.
+See the [provenance schema and source research](docs/ARCHITECTURE_AUDIT.md#material-provenance-schema-and-source-catalog-2026-10-31)
+for the file contract, source-access limitations, format comparison and Dataset Pipeline v1 design.
 
 ## Verified educational scenarios
 

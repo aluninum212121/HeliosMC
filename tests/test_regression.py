@@ -465,7 +465,8 @@ def test_existing_presets_have_honest_metadata_and_identical_transport_inputs():
         dataset = get_builtin_dataset(key)
         assert dataset.material_id not in ids
         ids.add(dataset.material_id)
-        assert dataset.data_kind == 'educational' and dataset.version is None
+        assert dataset.data_kind == 'legacy' and dataset.version is None
+        assert dataset.quality.validation_status == 'unverified'
         assert dataset.composition is dataset.temperature is dataset.energy_grid is None
         assert dataset.composition_basis == 'unknown'
         old, new = mat.get_transport_data(), resolve_transport_data(dataset)
