@@ -1,0 +1,839 @@
+{
+  "workload": "straight_absorption_rate_1_width_2",
+  "seed": 2026,
+  "repeats": 5,
+  "expected_transmission": 0.1353352832366127,
+  "cold_first_call_seconds": {
+    "legacy_before": 0.001988000003620982,
+    "legacy_current": 0.0011113000800833106,
+    "slab_kernel": 0.0005592999514192343
+  },
+  "cold_note": "includes first dispatch and JIT compilation when enabled; excludes SciPy startup",
+  "process_peak_working_set_bytes": 60477440,
+  "memory_note": "tracemalloc per call; process working-set peak includes all variants/imports/JIT, not attributable per variant",
+  "source_sha256": "7204eb1bc126681420d019266dc4f43594c283914337faed74a5a63eb8bf8e3b",
+  "baseline_sha256": "577e50040633acb9a30771ad6addf8e96a49e7a0d43b7f823767a2df80b87a8d",
+  "python": "3.14.4 (tags/v3.14.4:23116f9, Apr  7 2026, 14:10:54) [MSC v.1944 64 bit (AMD64)]",
+  "numpy": "2.4.4",
+  "scipy": "1.18.1",
+  "numba": null,
+  "platform": "Windows-11-10.0.26200-SP0",
+  "backend": "python",
+  "records": [
+    {
+      "variant": "legacy_before",
+      "n": 150,
+      "samples": 0,
+      "seconds": [
+        0.002343100029975176,
+        0.0015037000412121415,
+        0.0014841000083833933,
+        0.0014099000254645944,
+        0.0013018000172451138
+      ],
+      "median_seconds": 0.0014841000083833933,
+      "peak_tracked_bytes": 17920,
+      "retained_tracked_bytes": 2352,
+      "outcomes": {
+        "absorbed": 135,
+        "escaped": 15
+      },
+      "timing": null
+    },
+    {
+      "variant": "legacy_current",
+      "n": 150,
+      "samples": 0,
+      "seconds": [
+        0.0023095000069588423,
+        0.0019678999669849873,
+        0.0014775000745430589,
+        0.0014706000220030546,
+        0.0012632000725716352
+      ],
+      "median_seconds": 0.0014775000745430589,
+      "peak_tracked_bytes": 17952,
+      "retained_tracked_bytes": 2384,
+      "outcomes": {
+        "absorbed": 135,
+        "escaped": 15
+      },
+      "timing": null
+    },
+    {
+      "variant": "slab_python_numpy",
+      "n": 150,
+      "samples": 0,
+      "seconds": [
+        0.0036606999346986413,
+        0.002993999980390072,
+        0.002016299986280501,
+        0.0018850999185815454,
+        0.0035246999468654394
+      ],
+      "median_seconds": 0.002993999980390072,
+      "peak_tracked_bytes": 18026,
+      "retained_tracked_bytes": 16015,
+      "outcomes": {
+        "absorbed": 127,
+        "escaped_left": 0,
+        "escaped_right": 23,
+        "collision_limit": 0,
+        "numeric_limit": 0
+      },
+      "timing": {
+        "transport_seconds": 0.012580999988131225,
+        "total_seconds": 0.014482300030067563
+      }
+    },
+    {
+      "variant": "legacy_before",
+      "n": 150,
+      "samples": 40,
+      "seconds": [
+        0.0018761000828817487,
+        0.0013219000538811088,
+        0.001301799900829792,
+        0.0014171999646350741,
+        0.002284900052472949
+      ],
+      "median_seconds": 0.0014171999646350741,
+      "peak_tracked_bytes": 22936,
+      "retained_tracked_bytes": 2664,
+      "outcomes": {
+        "absorbed": 135,
+        "escaped": 15
+      },
+      "timing": null
+    },
+    {
+      "variant": "legacy_current",
+      "n": 150,
+      "samples": 40,
+      "seconds": [
+        0.0017855999758467078,
+        0.0025789999635890126,
+        0.0019053000723943114,
+        0.0014503999846056104,
+        0.002326600020751357
+      ],
+      "median_seconds": 0.0019053000723943114,
+      "peak_tracked_bytes": 22936,
+      "retained_tracked_bytes": 2664,
+      "outcomes": {
+        "absorbed": 135,
+        "escaped": 15
+      },
+      "timing": null
+    },
+    {
+      "variant": "slab_python_numpy",
+      "n": 150,
+      "samples": 40,
+      "seconds": [
+        0.002484199940226972,
+        0.002097400021739304,
+        0.0031000999733805656,
+        0.002411699970252812,
+        0.003407300100661814
+      ],
+      "median_seconds": 0.002484199940226972,
+      "peak_tracked_bytes": 25383,
+      "retained_tracked_bytes": 21775,
+      "outcomes": {
+        "absorbed": 127,
+        "escaped_left": 0,
+        "escaped_right": 23,
+        "collision_limit": 0,
+        "numeric_limit": 0
+      },
+      "timing": {
+        "transport_seconds": 0.01885340001899749,
+        "total_seconds": 0.02096439991146326
+      }
+    },
+    {
+      "variant": "legacy_before",
+      "n": 2000,
+      "samples": 0,
+      "seconds": [
+        0.013293099938891828,
+        0.012570600025355816,
+        0.013769299956038594,
+        0.01634360000025481,
+        0.01276850001886487
+      ],
+      "median_seconds": 0.013293099938891828,
+      "peak_tracked_bytes": 167898,
+      "retained_tracked_bytes": 2480,
+      "outcomes": {
+        "absorbed": 1729,
+        "escaped": 271
+      },
+      "timing": null
+    },
+    {
+      "variant": "legacy_current",
+      "n": 2000,
+      "samples": 0,
+      "seconds": [
+        0.020547399995848536,
+        0.011098099988885224,
+        0.014810299966484308,
+        0.01857009995728731,
+        0.010583700030110776
+      ],
+      "median_seconds": 0.014810299966484308,
+      "peak_tracked_bytes": 167898,
+      "retained_tracked_bytes": 2480,
+      "outcomes": {
+        "absorbed": 1729,
+        "escaped": 271
+      },
+      "timing": null
+    },
+    {
+      "variant": "slab_python_numpy",
+      "n": 2000,
+      "samples": 0,
+      "seconds": [
+        0.026497400016523898,
+        0.023527499986812472,
+        0.020308100036345422,
+        0.03315070003736764,
+        0.0208180999616161
+      ],
+      "median_seconds": 0.023527499986812472,
+      "peak_tracked_bytes": 18218,
+      "retained_tracked_bytes": 16207,
+      "outcomes": {
+        "absorbed": 1713,
+        "escaped_left": 0,
+        "escaped_right": 287,
+        "collision_limit": 0,
+        "numeric_limit": 0
+      },
+      "timing": {
+        "transport_seconds": 0.20174509997013956,
+        "total_seconds": 0.20456169999670237
+      }
+    },
+    {
+      "variant": "legacy_before",
+      "n": 2000,
+      "samples": 40,
+      "seconds": [
+        0.022768500028178096,
+        0.01415820000693202,
+        0.012720500002615154,
+        0.01830639992840588,
+        0.012316300068050623
+      ],
+      "median_seconds": 0.01415820000693202,
+      "peak_tracked_bytes": 170136,
+      "retained_tracked_bytes": 2728,
+      "outcomes": {
+        "absorbed": 1729,
+        "escaped": 271
+      },
+      "timing": null
+    },
+    {
+      "variant": "legacy_current",
+      "n": 2000,
+      "samples": 40,
+      "seconds": [
+        0.022616500034928322,
+        0.0126705999718979,
+        0.01017249992582947,
+        0.022395499981939793,
+        0.011298099998384714
+      ],
+      "median_seconds": 0.0126705999718979,
+      "peak_tracked_bytes": 170136,
+      "retained_tracked_bytes": 2728,
+      "outcomes": {
+        "absorbed": 1729,
+        "escaped": 271
+      },
+      "timing": null
+    },
+    {
+      "variant": "slab_python_numpy",
+      "n": 2000,
+      "samples": 40,
+      "seconds": [
+        0.025885799899697304,
+        0.021182100055739284,
+        0.0222849000710994,
+        0.019730100058950484,
+        0.023141899961046875
+      ],
+      "median_seconds": 0.0222849000710994,
+      "peak_tracked_bytes": 25543,
+      "retained_tracked_bytes": 21935,
+      "outcomes": {
+        "absorbed": 1713,
+        "escaped_left": 0,
+        "escaped_right": 287,
+        "collision_limit": 0,
+        "numeric_limit": 0
+      },
+      "timing": {
+        "transport_seconds": 0.1714676000410691,
+        "total_seconds": 0.1732025999808684
+      }
+    },
+    {
+      "variant": "legacy_before",
+      "n": 20000,
+      "samples": 0,
+      "seconds": [
+        0.12202269991394132,
+        0.1269223999697715,
+        0.12092289992142469,
+        0.11411059997044504,
+        0.12305609998293221
+      ],
+      "median_seconds": 0.12202269991394132,
+      "peak_tracked_bytes": 1625898,
+      "retained_tracked_bytes": 2480,
+      "outcomes": {
+        "absorbed": 17264,
+        "escaped": 2736
+      },
+      "timing": null
+    },
+    {
+      "variant": "legacy_current",
+      "n": 20000,
+      "samples": 0,
+      "seconds": [
+        0.13158539996948093,
+        0.1311188000254333,
+        0.1279554000357166,
+        0.13271180004812777,
+        0.12878759996965528
+      ],
+      "median_seconds": 0.1311188000254333,
+      "peak_tracked_bytes": 1625898,
+      "retained_tracked_bytes": 2480,
+      "outcomes": {
+        "absorbed": 17264,
+        "escaped": 2736
+      },
+      "timing": null
+    },
+    {
+      "variant": "slab_python_numpy",
+      "n": 20000,
+      "samples": 0,
+      "seconds": [
+        0.2805802000220865,
+        0.25455690000671893,
+        0.2590051000006497,
+        0.2386079999851063,
+        0.23222220002207905
+      ],
+      "median_seconds": 0.25455690000671893,
+      "peak_tracked_bytes": 18298,
+      "retained_tracked_bytes": 16255,
+      "outcomes": {
+        "absorbed": 17252,
+        "escaped_left": 0,
+        "escaped_right": 2748,
+        "collision_limit": 0,
+        "numeric_limit": 0
+      },
+      "timing": {
+        "transport_seconds": 2.0706446000840515,
+        "total_seconds": 2.073012899956666
+      }
+    },
+    {
+      "variant": "legacy_before",
+      "n": 20000,
+      "samples": 40,
+      "seconds": [
+        0.1440774000948295,
+        0.11782389995642006,
+        0.16958399990107864,
+        0.12741419998928905,
+        0.12755939993076026
+      ],
+      "median_seconds": 0.12755939993076026,
+      "peak_tracked_bytes": 1628136,
+      "retained_tracked_bytes": 2728,
+      "outcomes": {
+        "absorbed": 17264,
+        "escaped": 2736
+      },
+      "timing": null
+    },
+    {
+      "variant": "legacy_current",
+      "n": 20000,
+      "samples": 40,
+      "seconds": [
+        0.12510209996253252,
+        0.137614700011909,
+        0.12704570009373128,
+        0.11641350004356354,
+        0.15165260003414005
+      ],
+      "median_seconds": 0.12704570009373128,
+      "peak_tracked_bytes": 1628136,
+      "retained_tracked_bytes": 2728,
+      "outcomes": {
+        "absorbed": 17264,
+        "escaped": 2736
+      },
+      "timing": null
+    },
+    {
+      "variant": "slab_python_numpy",
+      "n": 20000,
+      "samples": 40,
+      "seconds": [
+        0.2360190999461338,
+        0.27309020003303885,
+        0.2262895000167191,
+        0.24173689994495362,
+        0.23857110005337745
+      ],
+      "median_seconds": 0.23857110005337745,
+      "peak_tracked_bytes": 24378,
+      "retained_tracked_bytes": 22335,
+      "outcomes": {
+        "absorbed": 17252,
+        "escaped_left": 0,
+        "escaped_right": 2748,
+        "collision_limit": 0,
+        "numeric_limit": 0
+      },
+      "timing": {
+        "transport_seconds": 1.9005631000036374,
+        "total_seconds": 1.9023526000091806
+      }
+    }
+  ],
+  "statistics_before_optimization": {
+    "workload": "straight_absorption_rate_1_width_2",
+    "seed": 2026,
+    "repeats": 5,
+    "expected_transmission": 0.1353352832366127,
+    "cold_first_call_seconds": {
+      "legacy_before": 0.0007627999875694513,
+      "legacy_current": 0.0006422000005841255,
+      "slab_kernel": 0.0002465000143274665
+    },
+    "cold_note": "includes first dispatch and compilation, excludes SciPy startup; not warmed throughput",
+    "source_sha256": "3089200811139ebcc5b7329b199a024d49e555229e2f349cc13a2d8057090e9c",
+    "baseline_sha256": "577e50040633acb9a30771ad6addf8e96a49e7a0d43b7f823767a2df80b87a8d",
+    "python": "3.14.4 (tags/v3.14.4:23116f9, Apr  7 2026, 14:10:54) [MSC v.1944 64 bit (AMD64)]",
+    "numpy": "2.4.4",
+    "scipy": "1.18.1",
+    "numba": null,
+    "platform": "Windows-11-10.0.26200-SP0",
+    "backend": "python",
+    "records": [
+      {
+        "variant": "legacy_before",
+        "n": 150,
+        "samples": 0,
+        "seconds": [
+          0.002179599949158728,
+          0.0015240999637171626,
+          0.0018770999740809202,
+          0.0010049999691545963,
+          0.0009777999948710203
+        ],
+        "median_seconds": 0.0015240999637171626,
+        "peak_tracked_bytes": 17952,
+        "retained_tracked_bytes": 2384,
+        "outcomes": {
+          "absorbed": 135,
+          "escaped": 15
+        },
+        "timing": null
+      },
+      {
+        "variant": "legacy_current",
+        "n": 150,
+        "samples": 0,
+        "seconds": [
+          0.001864599995315075,
+          0.0012659999774768949,
+          0.0013621000107377768,
+          0.0010559000074863434,
+          0.0009756000945344567
+        ],
+        "median_seconds": 0.0012659999774768949,
+        "peak_tracked_bytes": 17952,
+        "retained_tracked_bytes": 2384,
+        "outcomes": {
+          "absorbed": 135,
+          "escaped": 15
+        },
+        "timing": null
+      },
+      {
+        "variant": "slab_python_numpy",
+        "n": 150,
+        "samples": 0,
+        "seconds": [
+          0.03723090002313256,
+          0.030372400069609284,
+          0.02553079999051988,
+          0.028155399952083826,
+          0.030534999910742044
+        ],
+        "median_seconds": 0.030372400069609284,
+        "peak_tracked_bytes": 38052,
+        "retained_tracked_bytes": 20133,
+        "outcomes": {
+          "absorbed": 127,
+          "escaped_left": 0,
+          "escaped_right": 23,
+          "collision_limit": 0,
+          "numeric_limit": 0
+        },
+        "timing": {
+          "transport_seconds": 0.013762900023721159,
+          "total_seconds": 0.11674830003175884
+        }
+      },
+      {
+        "variant": "legacy_before",
+        "n": 150,
+        "samples": 40,
+        "seconds": [
+          0.0028119999915361404,
+          0.0025676999939605594,
+          0.0027966999914497137,
+          0.0025923000648617744,
+          0.00261629989836365
+        ],
+        "median_seconds": 0.00261629989836365,
+        "peak_tracked_bytes": 22936,
+        "retained_tracked_bytes": 2664,
+        "outcomes": {
+          "absorbed": 135,
+          "escaped": 15
+        },
+        "timing": null
+      },
+      {
+        "variant": "legacy_current",
+        "n": 150,
+        "samples": 40,
+        "seconds": [
+          0.0026147000025957823,
+          0.0027318999636918306,
+          0.0026153000071644783,
+          0.0038213999941945076,
+          0.0026249000802636147
+        ],
+        "median_seconds": 0.0026249000802636147,
+        "peak_tracked_bytes": 22892,
+        "retained_tracked_bytes": 2620,
+        "outcomes": {
+          "absorbed": 135,
+          "escaped": 15
+        },
+        "timing": null
+      },
+      {
+        "variant": "slab_python_numpy",
+        "n": 150,
+        "samples": 40,
+        "seconds": [
+          0.05861219996586442,
+          0.0557811000617221,
+          0.058643000083975494,
+          0.06211729999631643,
+          0.06134759995620698
+        ],
+        "median_seconds": 0.058643000083975494,
+        "peak_tracked_bytes": 45393,
+        "retained_tracked_bytes": 25847,
+        "outcomes": {
+          "absorbed": 127,
+          "escaped_left": 0,
+          "escaped_right": 23,
+          "collision_limit": 0,
+          "numeric_limit": 0
+        },
+        "timing": {
+          "transport_seconds": 0.025761199998669326,
+          "total_seconds": 0.28874979994725436
+        }
+      },
+      {
+        "variant": "legacy_before",
+        "n": 2000,
+        "samples": 0,
+        "seconds": [
+          0.022569800028577447,
+          0.02522559999488294,
+          0.023006000090390444,
+          0.02589679998345673,
+          0.025098599959164858
+        ],
+        "median_seconds": 0.025098599959164858,
+        "peak_tracked_bytes": 167898,
+        "retained_tracked_bytes": 2480,
+        "outcomes": {
+          "absorbed": 1729,
+          "escaped": 271
+        },
+        "timing": null
+      },
+      {
+        "variant": "legacy_current",
+        "n": 2000,
+        "samples": 0,
+        "seconds": [
+          0.025048800045624375,
+          0.024916900089010596,
+          0.022838500095531344,
+          0.025198600022122264,
+          0.023308199946768582
+        ],
+        "median_seconds": 0.024916900089010596,
+        "peak_tracked_bytes": 167898,
+        "retained_tracked_bytes": 2480,
+        "outcomes": {
+          "absorbed": 1729,
+          "escaped": 271
+        },
+        "timing": null
+      },
+      {
+        "variant": "slab_python_numpy",
+        "n": 2000,
+        "samples": 0,
+        "seconds": [
+          0.1085804000031203,
+          0.14769750006962568,
+          0.11715309997089207,
+          0.10766400001011789,
+          0.10700259997975081
+        ],
+        "median_seconds": 0.1085804000031203,
+        "peak_tracked_bytes": 38090,
+        "retained_tracked_bytes": 20233,
+        "outcomes": {
+          "absorbed": 1713,
+          "escaped_left": 0,
+          "escaped_right": 287,
+          "collision_limit": 0,
+          "numeric_limit": 0
+        },
+        "timing": {
+          "transport_seconds": 0.3100448999321088,
+          "total_seconds": 0.5894091000081971
+        }
+      },
+      {
+        "variant": "legacy_before",
+        "n": 2000,
+        "samples": 40,
+        "seconds": [
+          0.02312909997999668,
+          0.02348049997817725,
+          0.02367310004774481,
+          0.022697700071148574,
+          0.022348899976350367
+        ],
+        "median_seconds": 0.02312909997999668,
+        "peak_tracked_bytes": 170092,
+        "retained_tracked_bytes": 2684,
+        "outcomes": {
+          "absorbed": 1729,
+          "escaped": 271
+        },
+        "timing": null
+      },
+      {
+        "variant": "legacy_current",
+        "n": 2000,
+        "samples": 40,
+        "seconds": [
+          0.023975000018253922,
+          0.023925399989821017,
+          0.02248639997560531,
+          0.02241690002847463,
+          0.022872000001370907
+        ],
+        "median_seconds": 0.022872000001370907,
+        "peak_tracked_bytes": 170092,
+        "retained_tracked_bytes": 2684,
+        "outcomes": {
+          "absorbed": 1729,
+          "escaped": 271
+        },
+        "timing": null
+      },
+      {
+        "variant": "slab_python_numpy",
+        "n": 2000,
+        "samples": 40,
+        "seconds": [
+          0.10489389998838305,
+          0.11427199991885573,
+          0.10067059996072203,
+          0.10214580001775175,
+          0.10042330005671829
+        ],
+        "median_seconds": 0.10214580001775175,
+        "peak_tracked_bytes": 45507,
+        "retained_tracked_bytes": 26007,
+        "outcomes": {
+          "absorbed": 1713,
+          "escaped_left": 0,
+          "escaped_right": 287,
+          "collision_limit": 0,
+          "numeric_limit": 0
+        },
+        "timing": {
+          "transport_seconds": 0.3182549000484869,
+          "total_seconds": 0.594342999975197
+        }
+      },
+      {
+        "variant": "legacy_before",
+        "n": 20000,
+        "samples": 0,
+        "seconds": [
+          0.30109510000329465,
+          0.24214710004162043,
+          0.24886320007499307,
+          0.22179149999283254,
+          0.220054000033997
+        ],
+        "median_seconds": 0.24214710004162043,
+        "peak_tracked_bytes": 1625898,
+        "retained_tracked_bytes": 2480,
+        "outcomes": {
+          "absorbed": 17264,
+          "escaped": 2736
+        },
+        "timing": null
+      },
+      {
+        "variant": "legacy_current",
+        "n": 20000,
+        "samples": 0,
+        "seconds": [
+          0.2928607000503689,
+          0.15805399999953806,
+          0.39247839991003275,
+          0.26016840001102537,
+          0.2239105999469757
+        ],
+        "median_seconds": 0.26016840001102537,
+        "peak_tracked_bytes": 1625854,
+        "retained_tracked_bytes": 2436,
+        "outcomes": {
+          "absorbed": 17264,
+          "escaped": 2736
+        },
+        "timing": null
+      },
+      {
+        "variant": "slab_python_numpy",
+        "n": 20000,
+        "samples": 0,
+        "seconds": [
+          0.3773783999495208,
+          0.6747160999802873,
+          0.5080279000103474,
+          0.4816063999896869,
+          0.5326507000718266
+        ],
+        "median_seconds": 0.5080279000103474,
+        "peak_tracked_bytes": 38168,
+        "retained_tracked_bytes": 20265,
+        "outcomes": {
+          "absorbed": 17252,
+          "escaped_left": 0,
+          "escaped_right": 2748,
+          "collision_limit": 0,
+          "numeric_limit": 0
+        },
+        "timing": {
+          "transport_seconds": 3.4397781000006944,
+          "total_seconds": 3.680393199902028
+        }
+      },
+      {
+        "variant": "legacy_before",
+        "n": 20000,
+        "samples": 40,
+        "seconds": [
+          0.2321399999782443,
+          0.22840000002179295,
+          0.3029251000843942,
+          0.23860349995084107,
+          0.3288171000313014
+        ],
+        "median_seconds": 0.23860349995084107,
+        "peak_tracked_bytes": 1628092,
+        "retained_tracked_bytes": 2684,
+        "outcomes": {
+          "absorbed": 17264,
+          "escaped": 2736
+        },
+        "timing": null
+      },
+      {
+        "variant": "legacy_current",
+        "n": 20000,
+        "samples": 40,
+        "seconds": [
+          0.2216846999945119,
+          0.26118599995970726,
+          0.24850529991090298,
+          0.2876061999704689,
+          0.3230142999673262
+        ],
+        "median_seconds": 0.26118599995970726,
+        "peak_tracked_bytes": 1628092,
+        "retained_tracked_bytes": 2684,
+        "outcomes": {
+          "absorbed": 17264,
+          "escaped": 2736
+        },
+        "timing": null
+      },
+      {
+        "variant": "slab_python_numpy",
+        "n": 20000,
+        "samples": 40,
+        "seconds": [
+          0.6043058999348432,
+          0.5010375999845564,
+          0.6020353999920189,
+          0.6661258999956772,
+          0.621645399951376
+        ],
+        "median_seconds": 0.6043058999348432,
+        "peak_tracked_bytes": 44216,
+        "retained_tracked_bytes": 26359,
+        "outcomes": {
+          "absorbed": 17252,
+          "escaped_left": 0,
+          "escaped_right": 2748,
+          "collision_limit": 0,
+          "numeric_limit": 0
+        },
+        "timing": {
+          "transport_seconds": 4.052390800090507,
+          "total_seconds": 4.309412400005385
+        }
+      }
+    ]
+  },
+  "per_record_timing_note": "timing fields come from the separately traced memory run; untraced latency is in seconds/median_seconds"
+}

@@ -18,6 +18,8 @@ import sys
 from dataclasses import asdict
 from enum import IntEnum
 from threading import Lock
+from numbers import Real
+from time import perf_counter
 
 class HistoryStatus(IntEnum):
     MAX_STEPS_REACHED = -1
@@ -67,7 +69,7 @@ def _arrays(positions, directions):
 
 
 from numba_compat import njit, HAS_NUMBA
-from material import MATERIALS, resolve_transport_data
+from material import MATERIALS, resolve_transport_data, resolve_medium_rates
 
 
 @njit
@@ -531,3 +533,307 @@ def estimate_k_full(n_gen=30, n_source=150, radius=25.0,
                                "no_secondary_source" if len(next_pos) == 0 else
                                "generation_limit"),
     }
+
+
+# Independent educational models below do not use fission or generation ratios.
+def _real_scalar(name, value):
+    if isinstance(value, (bool, np.bool_)) or not isinstance(value, Real) or not np.isfinite(value):
+        raise ValueError(f"{name} must be a finite real scalar")
+    return float(value)
+
+
+def _confidence(value):
+    value = _real_scalar("confidence", value)
+    if not 0 < value < 1:
+        raise ValueError("confidence must be strictly between 0 and 1")
+    return value
+
+
+def summarize_binomial(successes, trials, confidence=.95, unfinished=0):
+    """Marginal Clopper-Pearson interval for independent Bernoulli histories.
+
+    Censored histories are not discarded or treated as failures: full-outcome
+    estimates/intervals are unavailable. Completion bounds describe the possible
+    empirical fraction, NOT confidence bounds on a population probability.
+    Multiple outcome intervals are marginal, not simultaneous multinomial CIs.
+    """
+    from scipy.special import betaincinv, betainccinv
+
+    for name, value in (("successes", successes), ("trials", trials), ("unfinished", unfinished)):
+        _integer(name, value)
+    successes, trials, unfinished = int(successes), int(trials), int(unfinished)
+    if trials > np.iinfo(np.int64).max:
+        raise ValueError("trials exceeds int64 counting capacity")
+    if successes + unfinished > trials:
+        raise ValueError("successes + unfinished must not exceed trials")
+    confidence = _confidence(confidence)
+    result = dict(trials=int(trials), successes=int(successes), unfinished=int(unfinished),
+                  estimate=None, standard_error=None, confidence_interval=None,
+                  confidence=confidence, method="clopper_pearson_marginal",
+                  standard_error_kind="bernoulli_plugin",
+                  observed_fraction=successes / trials if trials else None,
+                  completion_bounds=None, unavailable_reason=None)
+    if not trials:
+        result["unavailable_reason"] = "empty_sample"
+    elif unfinished:
+        result["unavailable_reason"] = "censored_histories"
+        result["completion_bounds"] = (successes / trials, (successes + unfinished) / trials)
+    else:
+        p = successes / trials
+        tail = (1 - confidence) / 2
+        # Binomial-tail inversion via the beta-binomial identity. Complemented
+        # inversion avoids forming 1-tail near one; endpoints need no zero shapes.
+        lo = 0. if successes == 0 else float(betaincinv(successes, trials-successes+1, tail))
+        hi = 1. if successes == trials else float(betainccinv(successes+1, trials-successes, tail))
+        result["estimate"] = p
+        if not np.isfinite([lo, hi]).all() or not 0 <= lo < hi <= 1:
+            result["unavailable_reason"] = "interval_resolution_limit"
+        else:
+            result.update(standard_error=float(np.sqrt(p * (1 - p) / trials)),
+                          confidence_interval=(lo, hi))
+    return result
+
+
+def summarize_samples(samples, confidence=.95, assumption="descriptive"):
+    """Mean/sample variance; Student-t CI ONLY under explicit IID normal inputs.
+
+    Descriptive mode makes no independence claim and provides no SE/CI. This
+    function must not be applied to correlated legacy generation ratios as IID.
+    Constant samples cannot justify an unknown-variance t interval.
+    """
+    from scipy.stats import t
+
+    confidence = _confidence(confidence)
+    if assumption not in ("descriptive", "iid_normal"):
+        raise ValueError("assumption must be descriptive or iid_normal")
+    raw = np.asanyarray(samples)
+    if np.ma.isMaskedArray(raw) or raw.dtype.kind not in "iuf":
+        raise ValueError("samples must be real numeric data without masks")
+    x = np.asarray(raw, dtype=np.float64)
+    if x.ndim != 1 or not np.isfinite(x).all():
+        raise ValueError("samples must be a finite one-dimensional array")
+    n = len(x)
+    result = dict(n=n, mean=None, sample_variance=None, standard_error=None,
+                  confidence_interval=None, confidence=confidence, assumption=assumption,
+                  unavailable_reason="empty_sample")
+    if not n:
+        return result
+    # Center first for close, large-offset observations; scale only where needed.
+    with np.errstate(over="ignore", invalid="ignore"):
+        delta = x - x[0]
+    if np.isfinite(delta).all():
+        scale = float(np.max(np.abs(delta))) or 1.
+        mean = float(x[0] + np.mean(delta / scale) * scale)
+    else:
+        scale = float(np.max(np.abs(x))) or 1.
+        mean = float(np.mean(x / scale) * scale)
+    variance = None
+    if n > 1:
+        with np.errstate(over="ignore", invalid="ignore"):
+            delta = x - mean
+            if np.isfinite(delta).all():
+                scale = float(np.max(np.abs(delta))) or 1.
+                normalized = delta / scale
+            else:
+                scale = float(np.max(np.abs(x))) or 1.
+                normalized = x / scale - mean / scale
+            std = float(np.sqrt(np.sum(normalized**2) / (n - 1)) * scale)
+            variance = float(np.float64(std) * std)
+        if not np.isfinite(variance):
+            raise ValueError("sample variance exceeds float64 representability")
+        if std > 0 and variance == 0:
+            raise ValueError("sample variance underflows float64 representability")
+    result.update(mean=mean, sample_variance=variance,
+                  unavailable_reason="independence_and_distribution_not_asserted")
+    if assumption == "iid_normal":
+        if n < 2:
+            result["unavailable_reason"] = "insufficient_samples"
+        elif variance == 0:
+            result["unavailable_reason"] = "zero_sample_variance"
+        else:
+            se = std / np.sqrt(n)
+            # isf avoids rounding (1+confidence)/2 to 1 near the endpoint.
+            margin = float(t.isf((1 - confidence) / 2, n - 1) * se)
+            interval = (mean - margin, mean + margin)
+            if not np.isfinite(interval).all() or interval[0] >= interval[1]:
+                raise ValueError("confidence interval exceeds float64 representability")
+            result.update(standard_error=float(se), confidence_interval=interval, unavailable_reason=None)
+    return result
+
+
+@njit(nogil=True)
+def _slab_batch(edges, absorption, scattering, n, max_collisions, rng,
+                sample_count, source_x, source_mu):
+    """Sequential independent random flights; only sampled x vertices retained.
+
+    Counts: absorption, left exit, right exit, collision limit, numeric limit.
+    Optical depth Exp(1) is carried across interfaces until the next collision.
+    Scattering chooses an isotropic 3-D direction through its uniform x cosine.
+    """
+    counts = np.zeros(5, dtype=np.int64)
+    paths = np.empty((sample_count, max_collisions + 2 if sample_count else 1), dtype=np.float64)
+    lengths = np.ones(sample_count, dtype=np.int64)
+    fates = np.full(sample_count, -1, dtype=np.int64)
+    for i in range(n):
+        x, mu = source_x, source_mu
+        layer = np.searchsorted(edges, x, side="right") - 1
+        if mu < 0 and x == edges[layer]:
+            layer -= 1
+        collisions = 0
+        if i < sample_count:
+            paths[i, 0] = x
+        fate = -1
+        while fate < 0:
+            if layer < 0:
+                fate = 1
+                break
+            if layer >= len(absorption):
+                fate = 2
+                break
+            tau = -np.log1p(-rng.random())
+            while True:
+                rate = absorption[layer] + scattering[layer]
+                if mu == 0. and rate == 0.:
+                    fate = 4  # A grazing vacuum trajectory cannot be resolved.
+                    break
+                boundary = edges[layer + 1] if mu > 0 else edges[layer]
+                distance = abs((boundary - x) / mu) if mu != 0 else np.inf
+                optical_width = rate * distance if rate > 0 else 0.
+                if rate > 0 and tau < optical_width:
+                    displacement = mu * (tau / rate)
+                    next_x = x + displacement
+                    if not np.isfinite(next_x) or (tau > 0. and mu != 0. and next_x == x):
+                        fate = 4
+                        break
+                    x = next_x
+                    if i < sample_count:
+                        paths[i, lengths[i]] = x
+                        lengths[i] += 1
+                    if collisions == max_collisions:
+                        fate = 3
+                        break
+                    collisions += 1
+                    if rng.random() < absorption[layer] / rate:
+                        fate = 0
+                    else:
+                        mu = 2. * rng.random() - 1.
+                    break
+                tau = max(0., tau - optical_width)
+                x = boundary
+                layer += 1 if mu > 0 else -1
+                if layer < 0 or layer == len(absorption):
+                    fate = 1 if layer < 0 else 2
+                    if i < sample_count:
+                        paths[i, lengths[i]] = x
+                        lengths[i] += 1
+                    break
+        counts[fate] += 1
+        if i < sample_count:
+            fates[i] = fate
+    return counts, paths, lengths, fates
+
+
+def simulate_slab(layers, edges_cm, n_histories=10000, *, seed=None,
+                  max_collisions=1000, max_samples=0, batch_size=4096,
+                  source_x=0., source_mu=1., confidence=.95, backend="auto",
+                  cancel_event=None, max_memory_bytes=DEFAULT_MAX_MEMORY_BYTES):
+    """Nonbranching random flights in an abstract piecewise-constant slab.
+
+    Layers use explicit absorption_rate/scattering_rate in cm^-1. No nuclear
+    channels, energy transport or multiplication. Interior interfaces preserve
+    remaining optical depth; outer boundaries absorb by escape. The collision
+    budget censors unresolved histories; it does not prevent ballistic escape.
+    Memory is O(layers + samples*(max_collisions+2)), independent of population.
+    Cancellation is cooperative between batches and raises without partial output.
+    """
+    import scipy
+
+    started = perf_counter()
+    for name, value in (("n_histories", n_histories), ("max_collisions", max_collisions),
+                        ("max_samples", max_samples), ("batch_size", batch_size)):
+        _integer(name, value, 1 if name == "batch_size" else 0)
+    if n_histories > np.iinfo(np.int64).max:
+        raise ValueError("n_histories exceeds int64 counting capacity")
+    if max_collisions > np.iinfo(np.int64).max - 2:
+        raise ValueError("max_collisions exceeds int64 indexing capacity")
+    if seed is not None:
+        _integer("seed", seed)
+    confidence = _confidence(confidence)
+    if backend not in ("auto", "numba", "python"):
+        raise ValueError("backend must be auto, numba or python")
+    if backend == "numba" and not HAS_NUMBA:
+        raise RuntimeError("Numba backend is unavailable")
+    use_numba = HAS_NUMBA and backend != "python"
+    kernel = _slab_batch if use_numba else getattr(_slab_batch, "py_func", _slab_batch)
+    if not isinstance(layers, (tuple, list)) or not layers:
+        raise ValueError("layers must be a nonempty sequence of MaterialDataset")
+    layers = tuple(layers)
+    samples = min(max_samples, n_histories)
+    # Check before layer/source/scratch allocations, including owning path copies.
+    required = 4096 + len(layers) * 4096 + samples * ((max_collisions + 2) * 16 + 256)
+    if max_memory_bytes is not None:
+        _integer("max_memory_bytes", max_memory_bytes)
+        if required > max_memory_bytes:
+            raise MemoryError(f"Slab storage estimate {required} exceeds max_memory_bytes={max_memory_bytes}")
+    rates = np.array([resolve_medium_rates(layer) for layer in layers], dtype=np.float64)
+    raw_edges = np.asanyarray(edges_cm)
+    if np.ma.isMaskedArray(raw_edges) or raw_edges.dtype.kind not in "iuf":
+        raise ValueError("edges_cm must contain real numeric values without masks")
+    edges = np.array(raw_edges, dtype=np.float64, copy=True)
+    if edges.shape != (len(layers) + 1,) or not np.isfinite(edges).all() or edges[0] != 0 or not np.all(np.diff(edges) > 0):
+        raise ValueError("edges_cm must start at 0, be finite, strictly increasing, and bound every layer")
+    source_x, source_mu = _real_scalar("source_x", source_x), _real_scalar("source_mu", source_mu)
+    if not 0 <= source_x < edges[-1] or not -1 <= source_mu <= 1 or source_mu == 0:
+        raise ValueError("source_x must be inside [0, width); source_mu must be nonzero in [-1, 1]")
+    effective_seed = int(np.random.SeedSequence(seed).entropy)
+    rng = np.random.Generator(np.random.PCG64(effective_seed))
+    counts = np.zeros(5, dtype=np.int64)
+    paths, path_fates = [], []
+    transport_started = perf_counter()
+    for offset in range(0, n_histories, batch_size):
+        if cancel_event is not None and cancel_event.is_set():
+            raise SimulationCancelled("Slab simulation cancelled")
+        n = min(batch_size, n_histories - offset)
+        sampled = min(n, max(0, samples - offset))
+        with np.errstate(over="ignore", divide="ignore", invalid="ignore", under="ignore"):
+            outcomes, scratch, lengths, fates = kernel(edges, rates[:, 0], rates[:, 1], n,
+                max_collisions, rng, sampled, source_x, source_mu)
+        counts += outcomes
+        paths.extend(scratch[j, :lengths[j]].copy() for j in range(sampled))
+        path_fates.extend(int(fates[j]) for j in range(sampled))
+    if cancel_event is not None and cancel_event.is_set():
+        raise SimulationCancelled("Slab simulation cancelled")
+    transport_seconds = perf_counter() - transport_started
+    if int(counts.sum()) != n_histories:
+        raise RuntimeError("Slab outcome counts do not reconcile")
+    names = ("absorbed", "escaped_left", "escaped_right", "collision_limit", "numeric_limit")
+    outcomes = {name: int(value) for name, value in zip(names, counts)}
+    unfinished = int(counts[3] + counts[4])
+    estimates = {name: summarize_binomial(int(counts[i]), n_histories, confidence, unfinished)
+                 for i, name in enumerate(names[:3])}
+    warnings = []
+    if not n_histories:
+        warnings.append("no_histories")
+    if counts[3]:
+        warnings.append("collision_limit_reached")
+    if counts[4]:
+        warnings.append("numerical_resolution_limit")
+    result = dict(algorithm_version="abstract_slab_v1", execution_status="completed",
+        outcome_counts=outcomes, processed_histories=int(n_histories),
+        completed_histories=int(n_histories) - unfinished, unfinished_histories=unfinished,
+        histories_complete=unfinished == 0, estimates=estimates,
+        sampled_paths_cm=paths, sampled_path_fates=path_fates, warnings=warnings,
+        limitations=["abstract_nonreactive_model", "piecewise_constant_rates",
+                     "isotropic_scattering", "marginal_not_simultaneous_intervals"],
+        timing=dict(transport_seconds=transport_seconds),
+        run_info=dict(seed=None if seed is None else int(seed), effective_seed=effective_seed,
+            rng="PCG64", n_histories=int(n_histories), max_collisions=int(max_collisions),
+            max_samples=int(max_samples), batch_size=int(batch_size), source_x_cm=source_x,
+            source_mu=source_mu, confidence=confidence,
+            max_memory_bytes=None if max_memory_bytes is None else int(max_memory_bytes),
+            edges_cm=edges.tolist(), layers=[asdict(layer) for layer in layers],
+            backend="numba" if use_numba else "python_numpy", python_version=sys.version.split()[0],
+            numpy_version=np.__version__, scipy_version=scipy.__version__,
+            numba_version=getattr(sys.modules.get("numba"), "__version__", None) if use_numba else None))
+    result["timing"]["total_seconds"] = perf_counter() - started
+    return result

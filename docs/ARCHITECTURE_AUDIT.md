@@ -385,3 +385,484 @@ memory-budget/ownership/retention tests passed in both backends. The temporary
 baseline, compatibility harnesses and pytest directories were removed after use.
 Only two intentional benchmark JSON artifacts were added; no application modules,
 dependencies or directories were created, and no existing files were deleted.
+
+## Structured material data schema (2026-10-31)
+
+### Scope and existing data
+
+This follow-up builds on the earlier TransportData boundary. Existing Material
+objects store mutable name, microscopic sigma_f/sigma_a/sigma_s (barn), nu
+(dimensionless), density (g/cm^3), molar_mass (g/mol), and GUI color. Cross
+sections/nu are constants during transport; total cross section, number density,
+macroscopic total and mean free path (cm) are derived. Public Material fields
+can still be changed between calls. The engine already freezes TransportData
+once per run. The four built-in definitions and their formulas are preserved.
+Names such as an enrichment percentage do not supply a documented composition,
+temperature, energy weighting or primary scientific reference.
+
+Only `material.py`, the existing regression tests, README and this audit are
+changed by this follow-up. No production module, data file, external dependency,
+ENDF download/parser, transport process, GUI redesign or ML implementation is
+introduced. `physics.py`, worker, GUI and the legacy monolith remain unchanged.
+
+### Unified schema
+
+Two frozen dataclasses are added in `material.py`. MaterialQuantity describes a
+quantity/channel; MaterialDataset describes one material data record. They do
+not depend on an archive format or data vendor. A future provider can return the
+same schema, and an explicit one-group dataset already implements the existing
+`get_transport_data() -> TransportData` protocol.
+
+| MaterialDataset field | Meaning and missing-data policy |
+| --- | --- |
+| `material_id`, `name` | Required nonempty strings. ID has no whitespace; providers/archives must enforce uniqueness in their registry. |
+| `data_kind` | Required `educational`, `synthetic`, `experimental` or `evaluated`. Evaluated libraries are distinguished from direct measurements. Labels are declarations, not verification. |
+| `source`, `version`, `provenance` | Required source string, explicit version string or None if unknown, and a nonempty tuple of source/processing notes. |
+| `composition`, `composition_basis` | Component/amount pairs with basis `atom_fraction`, `mass_fraction` or `stoichiometric`; unknown composition is None with basis `unknown`. Component strings are identifiers, not parsed/verified nuclides. |
+| `temperature`, `temperature_unit` | Finite nonnegative K, or None for unknown temperature. No implicit Celsius conversion. |
+| `energy_representation`, `energy_grid`, `energy_unit` | `one_group` constants with grid=None, or `pointwise` data on an explicit strictly increasing nonnegative eV grid. No hidden energy lookup, averaging, interpolation or extrapolation. |
+| `quantities` | Nonempty tuple of uniquely named MaterialQuantity records; partial scientific records may be stored without being executable. |
+
+MaterialQuantity has `name`, `unit`, `values`, `status`, and optional
+`description`. Status is `available`, `missing` or `unsupported`. Available
+values require known units and a finite nonnegative real scalar/one-dimensional
+numeric NumPy array. Missing/unsupported entries require values=None; unit may
+also be None. Zero remains an explicit value and never stands for missing data.
+Unsupported means the provider cannot supply that quantity in this representation;
+current transport capability is checked separately at adaptation time.
+
+Canonical units currently accepted are barn, 1, cm, 1/cm, g/cm^3 and g/mol.
+Known names require their exact unit: sigma_f/sigma_a/sigma_s in barn, nu in 1,
+mean_free_path in cm, density in g/cm^3, molar_mass in g/mol. Sigma_a explicitly
+excludes fission. Additional channel names can be stored with supported units;
+they do not extend transport. Unsupported units require an explicit future
+conversion/contract extension, not silent interpretation.
+
+Quantity arrays and the energy grid are owned immutable float64 contiguous
+copies; changing source arrays cannot change the dataset, nor can write access
+be re-enabled on the stored bytes buffer. Masked/object/complex/bool/string arrays,
+NaN/infinity, negative values, non-1D/empty arrays and duplicate/nonmonotonic
+energies are rejected. Every available pointwise array must match the grid
+length. Scalar pointwise constants and group-edge/bin representations are not
+supported by this initial schema; no implicit broadcasting is performed.
+Partially missing arrays require an explicit future policy; masks must not be
+silently discarded or missing samples filled with zeros.
+Dataclasses containing arrays use identity equality; numerical comparison should
+explicitly compare fields/arrays rather than infer scientific equivalence.
+
+Composition components must be unique, amounts finite and nonnegative, and
+their sum positive/finite. Fractions must sum to 1 within absolute 1e-8; no
+automatic normalization occurs. Stoichiometric amounts need not sum to 1.
+These are structural checks, not verified chemistry, isotope identities or
+cross-section/number-density consistency.
+
+### Compatibility and example
+
+`get_builtin_dataset(key)` reads the current Material values at call time, with
+stable IDs `heliosmc:u235-pure`, `heliosmc:u235-3.5`, `heliosmc:water`, and
+`heliosmc:graphite`. It labels all four educational, records the project source,
+sets version/composition/temperature/grid to None where unknown, and copies all
+five transport inputs plus density/molar mass. No numeric registry is duplicated;
+the returned record is a snapshot, not a live link. IDs identify presets rather
+than content; modified values require version/content tracking when archived.
+
+```python
+from material import MaterialDataset, MaterialQuantity, get_builtin_dataset
+
+dataset = get_builtin_dataset("Графит")  # Existing educational constants.
+inputs = dataset.get_transport_data()  # Existing scalar transport boundary.
+
+# Invented software fixture ONLY; not experimental or evaluated nuclear data.
+fixture = MaterialDataset(
+    material_id="example:synthetic-constant", name="Artificial test material",
+    data_kind="synthetic", source="invented documentation fixture", version="1",
+    provenance=("For software examples only; no scientific validity claimed.",),
+    quantities=(
+        MaterialQuantity("sigma_f", "barn", 0.),
+        MaterialQuantity("sigma_a", "barn", .25),
+        MaterialQuantity("sigma_s", "barn", .75),
+        MaterialQuantity("nu", "1", 0.),
+        MaterialQuantity("mean_free_path", "cm", 1.),
+    ),
+)
+```
+
+For current execution all five transport quantities must be explicitly available
+scalars. Additional available channels unknown to the current model are rejected;
+density/molar mass may be recorded but are not recomputed or used to override
+the supplied mean free path. TransportData retains its existing positive
+mean-free-path/total checks. A pointwise dataset raises a clear storage-only error
+before transport; no arbitrary table energy is chosen. Old Material objects,
+TransportData snapshots and legacy/provider APIs continue to work.
+
+When using a dataset, the existing run_info.material.data_source receives a
+compact classification/material-ID/version/source label. It is not an archival
+serialization or an identifier to parse. Archive the full scientific record
+separately for provenance; current run_info alone does not contain composition,
+temperature or full processing history. No serializing loader/writer is added.
+
+### Requirements for the two transport modes
+
+- **Existing one-group mode:** five scalar inputs, existing units and formulas,
+  one immutable snapshot per run, unchanged random-number use, no energy/thermal
+  state or new interpolation. Unknown metadata remains explicit. Any future
+  reduction of tables must document energy weighting, applicability and source;
+  it must be a deliberate upstream transformation.
+- **Future energy-dependent mode:** require validated particle-energy state and
+  source/outgoing spectra, a chosen interpolation/out-of-range policy,
+  temperature handling, reaction/absorption conventions, isotope/mixture
+  normalization, and consistent cross sections/nu on validated numeric arrays.
+  Resolve schemas outside Numba; pass only numeric arrays/scalars to a separately
+  reviewed kernel extension. The pointwise container alone implements none of
+  these physics. Independent processing/interpolation/transport reference cases
+  and convergence/uncertainty criteria are required before scientific claims.
+
+### Proposed future ML dataset archive (documentation only)
+
+Use a versioned UTF-8 JSON manifest for metadata and separate numeric NumPy
+arrays (for example NPZ read without pickle) for grids/features/outputs. No new
+storage dependency is required for that proposal; file I/O is not implemented.
+The manifest should include:
+
+1. Archive schema version, immutable case ID, material/data IDs, source releases,
+   processing and content hashes, classification and full units/provenance.
+2. Explicit input parameters: composition/basis, temperature, constant data or
+   grid/channel array references, geometry/model assumptions and reduction policy.
+3. Simulator/physical-model version, code revision, backend/dependency versions,
+   seed, source population, generations, burn-in, step/sample/budget settings.
+4. Outputs with estimator identity and units, counts, termination/completeness,
+   warnings and selected generations. Current source ratio must not be labeled
+   validated k_eff in a future training target.
+5. Uncertainty records with method, number of independent repetitions, generation
+   correlation/burn-in policy, variance/standard-error/confidence-interval meaning
+   and coverage where established. Unknown/unimplemented metrics are None;
+   existing generation k_std is only population spread, not a standard error.
+6. Verification-scenario ID/version, independent reference source, acceptance
+   criteria, comparison metrics/results and review status. Record train/validation/
+   test split and grouping to prevent correlated cases leaking between splits;
+   surrogate version, training-data version and applicability belong to later ML
+   artifacts. Software-passed and scientifically validated are separate statuses.
+
+### Follow-up verification
+
+The pre-change working tree was clean at `d200003`. Before editing, exact seeded
+results were saved temporarily for all four presets at zero and six transport
+steps (eight cases in each backend). New regression coverage uses explicitly
+synthetic fixtures and checks schema validation, immutable array ownership,
+missing/unsupported data, builtin metadata and worker execution. Executed final
+results are recorded below.
+
+- Full final suite with Numba: **102 passed, 2 subtests passed in 23.71 s**.
+  This includes existing NumPy/Numba, RNG, memory, GUI Agg rendering, background
+  execution, cancellation, failure/restart and legacy/provider compatibility tests,
+  plus the six new schema tests. No test failure was observed.
+- Focused schema checks passed with Numba (6 passed, 60 deselected in 6.35 s).
+  The final full suite also includes the added masked-array rejection case.
+  Final schema checks with Numba disabled before import in a fresh interpreter:
+  **6 passed, 60 deselected in 1.07 s**. The full suite was not repeated entirely in fallback mode
+  for this follow-up; the existing fallback subprocess smoke test also passed
+  as part of the full suite.
+- The saved pre-change runs matched every result field exactly for all eight
+  cases in each backend, including paths, fission arrays, outcome counts, k and
+  run metadata. For each backend all four presets also ran through MaterialDataset
+  with identical numeric results and metadata except the deliberately new source
+  label. Seed=2026, n_source=80, n_gen=4, max_samples=4, steps=0/6.
+- Source checks confirmed byte-identical physics.py, GUI, worker, compatibility,
+  standalone particle, main and legacy monolith. Existing Material, TransportData
+  and resolve_transport_data ASTs are unchanged. `git diff --check` passed.
+- Native Tk initialization was attempted and failed with
+  `TclError: Can't find a usable init.tcl`. Native desktop interaction therefore
+  remains unverified; GUI integration passed with Agg. No Tcl/Tk repair, package
+  installation or environment change was performed.
+- Python 3.14.4, NumPy 2.4.4, Numba 0.67.0 and pytest 9.1.1 were used via the
+  installed interpreter directly. Full command: `<python> -m pytest -q -p
+  no:cacheprovider --basetemp <task temporary directory>`. Focused checks selected
+  the six new schema tests; fallback set `sys.modules['numba']=None` first.
+  Temporary snapshots, trusted local result pickles and pytest artifacts were
+  removed after verification. No permanent files were created or deleted, and
+  no benchmark was run for this data-schema change.
+
+## Educational mathematics upgrade (2026-10-31)
+
+### Audit completed before implementation
+
+Dependency map: main -> GUI -> worker -> estimate_k_full -> generation ->
+transport wrapper -> Numba/Python kernel; physics -> material adapter -> frozen
+TransportData; numba_compat selects compilation/fallback. Neutron is a separate
+single-particle utility. Physics imports no GUI. Existing GUI calls
+estimate_k_full and reads its dictionaries; worker accepts a callable with a
+cancel_event keyword. Public sampler signatures, five-/eight-element transport/
+generation tuples, fate codes, callbacks and result keys are compatibility points.
+
+The existing model uses a homogeneous sphere, exponential-like flights,
+constant channel ratios, uniform cosine/azimuth scattering, truncated secondary
+production and population capping. NumPy supplies arrays and source generation;
+Numba compiles samplers/scattering/transport. Generation orchestration and
+visualization conversion remain Python. The model and formulas below are not
+extended into reactor analysis by this task.
+
+Confirmed issues and decisions:
+
+1. `-mfp*log(U+1e-15)` truncates the tail and can produce a tiny negative distance
+   at extreme U. Keep the legacy stream for compatibility; the new educational
+   algorithm uses `-log1p(-U)` optical depths without an arbitrary epsilon.
+2. Sphere leakage is tested after a full flight, not at the intersection. The
+   new slab model handles exact interfaces; legacy geometry is not replaced.
+3. k uses int(F*nu)/N before capping, including unfinished histories. Its population
+   spread ignores generation correlation and is not a standard error. Burn-in
+   can fall back to all generations. No IID confidence interval will be attached
+   to it and no multiplication/criticality algorithm is added.
+4. Existing outcome totals reconcile and warnings cover unfinished histories.
+   Censoring can affect future generations. Completed-only renormalization would
+   hide bias. The new scenario withholds full-outcome estimates under censoring.
+5. Fallback seeding temporarily uses global NumPy state under an application lock;
+   unrelated external draws are unprotected. The new path owns a local Generator,
+   records replay entropy and carries the same state across batches.
+6. Scattering is duplicated in Neutron, the standalone batch sampler and inline
+   transport. Consolidation would affect compiled arithmetic/RNG and is deferred.
+7. Transport scans/draws for inactive particles. Input ownership copies are
+   intentional; fission-index/list/array conversions and full secondary expansion
+   remain costs. New nonbranching histories need only aggregate counters, bounded
+   sampled paths and layer arrays. No parallel/GPU framework is introduced.
+8. Finite legacy inputs can still overflow derived positions/norms; direct scalar
+   validation is permissive in places. New APIs validate real scalars, finite
+   totals, probability domains and representability; a legacy-wide numerical/API
+   rewrite is a separate compatibility project.
+
+Only existing production modules will be extended. New independent mathematical
+tests belong in one focused test file, and existing benchmark infrastructure will
+be extended rather than duplicated. SciPy was absent at audit time and is being
+installed as explicitly requested, without replacing the installed NumPy.
+
+### Implemented mathematical model
+
+`simulate_slab(layers, edges_cm, ...)` is a nonreactive random-flight model, not
+an extension of the experimental multiplication calculation. Independent
+histories start at x=0 with x-direction cosine mu=1 by default; source_x/source_mu
+are explicit bounded parameters. Geometry is infinite transversely and finite
+in x. Edges start at zero and strictly increase; x is in cm. Each layer provides
+nonnegative finite absorption rate a and scattering rate s in cm^-1. Total rate
+is finite; a+s=0 is vacuum. The existing MaterialDataset schema carries IDs,
+units, source/version/classification and provenance. No coefficients are inferred
+from nuclear cross sections, and no scientific dataset is downloaded.
+
+For each free flight sample U in [0,1), tau=-log1p(-U). Thus
+P(tau>t)=exp(-t) for t>=0 in the ideal continuous model. A distance l in a layer
+consumes optical depth (a+s)*l, with l=abs(delta_x/mu) to an interface. If tau is
+larger, move exactly to that interface, subtract its optical depth and continue
+in the next layer. Otherwise the collision occurs at distance tau/(a+s).
+Absorption probability is a/(a+s); scattering probability is its complement.
+Scattering samples mu=2U-1, the projection of an isotropic 3-D direction. There
+is no energy change, multiplication or reaction bookkeeping. Vacuum layers
+consume no optical depth and are crossed without artificial collisions. The
+algorithm does not approximate a heterogeneous medium by an averaged rate.
+
+Without scattering at normal incidence, transmission is exactly
+T=exp(-sum_i a_i*width_i); at cosine mu>0 divide optical depth by mu. The absorbed
+fraction is 1-T. Quadrature independently integrates local absorption densities
+to verify conservation. Reflection symmetry of a purely scattering slab and
+unit-direction/angular moments are additional independent checks. Splitting an
+identical homogeneous layer preserves the stochastic problem and random stream
+within tested floating-point tolerances.
+
+max_collisions limits executed interactions, not interfaces or free escape:
+even a zero-collision budget allows a known ballistic escape. At the next
+unexecuted collision the history is censored. Counts distinguish absorbed,
+escaped_left, escaped_right, collision_limit and numeric_limit. A grazing vacuum
+trajectory or inability to represent a nonzero displacement is recorded as a
+numeric limit; no artificial position adjustment hides it. Completed + unfinished
+equals processed. Strong/extreme rates can cause numerical censoring even for
+otherwise valid finite inputs. Float64 precision cannot represent every scale.
+
+### Statistical processing and SciPy justification
+
+`summarize_binomial` estimates an IID Bernoulli outcome with k/n and plug-in SE
+sqrt(p_hat*(1-p_hat)/n). Its Clopper-Pearson interval inverts binomial tails and
+retains nonzero width when k=0 or n, even though the plug-in SE is zero. The
+[SciPy binomtest/proportion_ci API](https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.binomtest.html)
+provides an independent implementation used in tests. Runtime interval endpoints
+use the beta-binomial identity: L=BetaInv(alpha/2;k,n-k+1) and
+U=BetaComplementInv(alpha/2;k+1,n-k), with explicit endpoints L=0 at k=0,
+U=1 at k=n. These use SciPy
+[betaincinv](https://docs.scipy.org/doc/scipy/reference/generated/scipy.special.betaincinv.html)
+and [betainccinv](https://docs.scipy.org/doc/scipy/reference/generated/scipy.special.betainccinv.html)
+outside JIT, avoiding an unused p-value and repeated scalar root solving. This
+optimization was driven by measured statistical overhead and preserves the
+Clopper-Pearson definition. Binomial survival/CDF tail equations, endpoint formulas
+and enumerated coverage verify the implementation independently. An interval
+that cannot be resolved in float64 is explicitly unavailable. Each terminal-outcome
+interval is marginal, not a simultaneous
+multinomial statement. Repeated adaptive inspection/selection of intervals is
+not covered by the fixed-sample interpretation.
+
+If any history is unfinished, full-outcome estimate, SE and CI are None.
+Observed fraction remains k/n and possible empirical completion fractions range
+from k/n to (k+unfinished)/n. These are NOT confidence limits for the population.
+Dropping censored histories or treating them as failures could bias results.
+Empty samples also return explicit unavailable reasons. Existing k_mean/k_std
+are untouched; no IID interval or bootstrap is attached to correlated generations.
+
+`summarize_samples` reports a mean and unbiased sample variance for finite 1-D
+real data. Centering/scaling avoids avoidable overflow and loss from large common
+offsets; unrepresentable variance/intervals raise rather than return NaN/infinity.
+Descriptive mode asserts neither independence nor a sampling distribution and
+does not return SE/CI. With explicit IID normal assumptions and n>=2, SE=s/sqrt(n)
+and mean +/- t_(n-1,1-alpha/2)*SE form the standard interval. The
+[Student-t inverse survival function](https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.t.html)
+avoids quantile rounding near confidence=1. Zero sample variance does not justify
+an unknown-variance t interval here; it is marked unavailable. Assumptions are
+declared, not automatically verified. Finite-machine RNG is an approximation to
+the continuous distributions, not an infinite-tail exact sampler.
+Mean, SE and interval inherit input units; variance has squared input units.
+Slab outcome probabilities/intervals are dimensionless, sampled positions are cm.
+
+`interpolate_synthetic_quantity` uses
+[SciPy PCHIP](https://docs.scipy.org/doc/scipy/reference/generated/scipy.interpolate.PchipInterpolator.html)
+only for explicitly synthetic pointwise tables with at least two nodes. It
+preserves the tabulated shape and rejects out-of-range queries. Tests verify
+linear reproduction, monotonicity and error against a known quadratic function.
+It is not called by transport and is not an ENDF interpolation convention.
+[scipy.integrate.quad](https://docs.scipy.org/doc/scipy/reference/generated/scipy.integrate.quad.html)
+is used only as an independent check in tests. The inverse-beta special functions
+are justified by the measured CI bottleneck; bootstrap is unnecessary for the exact binomial/normal reference
+models and unjustified for the retained correlated/censored data.
+
+### RNG, execution and performance design
+
+Each public slab run owns one PCG64 Generator. Explicit seed reproduces its stream;
+seed=None records SeedSequence entropy as effective_seed for replay. The same
+Generator continues across chunks; no per-chunk reseeding or visualization RNG
+draws occur. History order is sequential, making batch/sample count independent
+of outcome draws. Numba's supported Generator operations execute in JIT;
+[Numba's Generator documentation](https://numba.readthedocs.io/en/stable/reference/numpysupported.html)
+describes this shared-state interface. No Generator is shared across concurrent
+runs and no global NumPy RNG is modified by the new API. Reproducibility is only
+claimed within tested versions/platforms; cross-version guarantees are absent.
+
+Numba compiles the scalar history/interface loops, releasing the GIL. The Python
+backend executes the same algorithm with NumPy's Generator for reference/fallback.
+No SciPy function occurs inside JIT. Unlike the old full-population stepping loop,
+the new algorithm finishes one nonbranching history before the next and retains
+aggregate counts only. Sampled paths store x at collisions/outer exit, with at
+most max_collisions+2 vertices. No internal-interface vertex is needed for a
+straight segment. Storage is O(layers + samples*collision_budget), independent
+of population; source arrays for all histories are not allocated. The planning
+memory guard includes scratch/owning path copies but is not a hard RSS bound on
+Python/JIT/SciPy/allocator metadata. Cancellation is checked between chunks;
+chunk/JIT work is not interruptible, so large budgets can delay cancellation.
+
+Sampled path fate codes are 0 absorbed, 1 left escape, 2 right escape,
+3 collision limit, 4 numerical limit; sampled histories are the first bounded
+subset, without consuming extra random draws.
+
+### Structured results and next work
+
+The new result records algorithm_version=abstract_slab_v1, all input layers and
+edges, source state, requested/effective seed, PCG64 name, sample size, limits,
+backend/Python/NumPy/Numba/SciPy versions, outcome counts, uncertainty methods,
+unavailable reasons, warnings and limitations. Transport and total execution
+seconds are separate; the first JIT invocation includes compilation. Timing is
+nondeterministic metadata, not a simulation target. Sampled paths are NumPy arrays;
+an archive needs numeric array storage plus a JSON manifest, as proposed above.
+Code/data content hashes and train/test provenance belong in that archive; no
+large dataset generator or ML inference/training code is introduced.
+
+Future work requires independent scientific references before adopting measured
+or evaluated data; abstract rates are not nuclear cross sections. Pointwise
+energy tables still cannot enter either transport path. Adding energy state,
+spectra, physical interpolation/mixture rules or a different geometry is a
+separate reviewed model change. Legacy shared-RNG/scattering/overflow/geometry
+issues remain documented compatibility debt, not silently fixed under this API.
+
+### Executed verification and benchmarks
+
+Final full suite with Numba: **126 passed, 2 subtests passed in 62.17 s**.
+The 24 new mathematical tests also passed on the Python/NumPy fallback with
+Numba disabled before import: **24 passed in 10.60 s**. The full old suite was
+not rerun entirely in fallback mode; its existing no-Numba subprocess smoke test
+passed in the full run. No tests were disabled or old tests removed. Initial
+new-test failure from mean rounding was corrected in the implementation by
+centering/scaling, without relaxing the reference assertion.
+
+Coverage separates software invariants, mathematical verification and scientific
+validity. Checks include analytic homogeneous/heterogeneous/oblique attenuation,
+quadrature conservation, layer partition invariance, exponential KS statistics,
+isotropic angular moments/reflection symmetry, enumerated exact binomial coverage,
+binomial-tail inversion and agreement with SciPy's independent interval API,
+independent Gaussian interval coverage, empirical inverse-sqrt(N) error scaling,
+PCHIP polynomial error, invalid inputs, censoring/numeric limits, reproducibility,
+chunk/sample/backend invariance, global RNG isolation, worker execution/failure
+and cancellation while a batch is in progress. Statistical rejection thresholds
+and seeds are fixed in tests; passing these is not physical validation.
+
+Eight exact legacy comparisons (four presets, max_steps=0/6, n_gen=4,
+n_source=80, samples=4, seed=2026) passed in each backend against the pre-task
+working-tree snapshot, including arrays, paths, counts, summary values and
+metadata. All pre-existing physics function/class ASTs remain identical.
+GUI/worker/main/Neutron/compatibility/monolith bytes and the pre-existing regression
+test file were checked unchanged. User GUI branding edits and earlier material/
+documentation changes were preserved. `git diff --check` passed.
+
+GUI regressions render with Agg and exercise background completion, cancellation,
+failure/restart, close and navigation. Native Tk initialization was attempted
+but failed with `TclError: Can't find a usable init.tcl`; desktop interaction and
+event-loop latency therefore remain unverified. No Tk/environment repair was made.
+
+The existing benchmark_transport.py gained an opt-in `--educational` mode and
+`--baseline-source`; existing default benchmark behavior is preserved. The new
+mode does not execute branching workloads. It compares the same straight-flight
+absorption problem (rate=1/cm, width=2 cm, source mu=1, one allowed collision)
+at N=150/2,000/20,000, 0/40 recorded trajectories, seed=2026 and five alternating
+repetitions per variant. Legacy before/current must match counts exactly; new
+Numba/Python counts must match exactly. Old/new model RNGs differ, so no paired
+trajectory equality is asserted between the two models. Ideal T=exp(-2).
+
+Timing and tracemalloc runs are separate; no tests/other benchmark jobs ran during
+timings. `records[].seconds/median_seconds` are untraced full-call times.
+`records[].timing` is from the separate traced run and is not a throughput measure.
+The before snapshot SHA256 is
+`577e50040633acb9a30771ad6addf8e96a49e7a0d43b7f823767a2df80b87a8d`;
+final physics source SHA256 is
+`7204eb1bc126681420d019266dc4f43594c283914337faed74a5a63eb8bf8e3b`.
+Raw data and environment details are in educational_math_numba.json and
+educational_math_fallback.json under benchmarks/results. Each also retains the
+complete earlier CI implementation measurements in `statistics_before_optimization`;
+no slow-run measurements were discarded. All variants use the same parameters.
+
+Warmed medians, zero recorded paths, milliseconds:
+
+| Histories | Legacy before, Numba | Legacy current, Numba | New Python/NumPy | New Numba |
+| ---: | ---: | ---: | ---: | ---: |
+| 150 | 0.247 | 0.247 | 3.016 | 0.662 |
+| 2,000 | 0.490 | 0.530 | 31.586 | 0.903 |
+| 20,000 | 2.370 | 1.918 | 253.601 | 1.368 |
+
+The unchanged legacy implementation has timing variability, not a demonstrated
+algorithmic speedup. New Numba includes statistical intervals/metadata absent
+from the legacy transport return; small jobs cost more despite lower kernel
+work. At 20,000 histories with 40 paths, new Numba measured 2.313 ms versus
+legacy-before 3.674 ms. In the separate no-Numba process, at 20,000 histories and
+zero paths, old/current legacy were 122.023/131.119 ms, new Python 254.557 ms:
+fallback is slower here and should not be described as universally improved.
+
+The original general binomtest/proportion_ci route measured 67.187 ms for new
+Numba at 20,000 histories/zero paths; inverse-beta endpoints reduced the same
+full scenario to 1.368 ms. This is a measured implementation change, not a change
+in interval definition. The explicit tail-equation and coverage tests guard it.
+
+At 20,000 histories/zero paths the tracked allocation peak was 1506.97 KiB for
+legacy-before and 14.60 KiB for new Numba; with 40 paths, 1509.19 versus 20.58 KiB.
+These are tracked allocations, not total process RAM. Windows whole-process peak
+working set measured 202.74 MiB for the combined Numba benchmark and 57.68 MiB
+for fallback, including imports, allocator retention, all variants and JIT.
+It cannot be attributed to one variant. First JIT-call timings (not warmed
+throughput) were 10.286 s legacy-before, 2.554 s legacy-current and 1.811 s new
+kernel; later calls benefit from shared compiler startup, so these are not fair
+standalone compilation-speed ratios. SciPy startup was warmed before them.
+
+SciPy 1.18.1 was installed as explicitly authorized; NumPy 2.4.4 and Numba 0.67.0
+were retained. Python 3.14.4/Windows x64 were used. No new requirements file was
+created; README records the dependency and tested versions. No new production
+module or deleted file, and no commit/push. Added artifacts are one independent
+mathematical test module and two benchmark JSON outputs. Task-owned temporary
+snapshots/harnesses/test artifacts were removed after verification.

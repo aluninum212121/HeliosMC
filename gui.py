@@ -62,7 +62,7 @@ class NeutronSimGUI:
     # ── компоновка окна ────────────────────────────────────────────
     def _build_layout(self):
         self.fig = plt.figure(figsize=(16, 9), facecolor=self.C["bg"])
-        self.fig.canvas.manager.set_window_title("NeutronMC — симулятор активной зоны")
+        self.fig.canvas.manager.set_window_title("HeliosMC — симулятор активной зоны")
 
         gs = GridSpec(3, 3, figure=self.fig,
                       left=0.01, right=0.99,
@@ -102,7 +102,7 @@ class NeutronSimGUI:
                 sp.set_edgecolor(self.C["border"])
 
         self.fig.text(0.5, 0.975,
-                      "NeutronMC  ·  Симулятор активной зоны  ·  Метод Монте-Карло",
+                      "HeliosMC  ·  Симулятор активной зоны  ·  Метод Монте-Карло",
                       ha="center", va="top",
                       color=self.C["text"], fontsize=11, fontweight="bold",
                       fontfamily="monospace")

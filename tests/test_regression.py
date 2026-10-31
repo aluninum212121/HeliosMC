@@ -12,7 +12,8 @@ import numpy as np
 import pytest
 
 import physics
-from material import Material, TransportData, resolve_transport_data
+from material import (Material, TransportData, resolve_transport_data, MaterialDataset,
+                      MaterialQuantity, MATERIALS, get_builtin_dataset)
 from gui import NeutronSimGUI
 from simulation_worker import SimulationWorker, ExecutionState
 
@@ -353,3 +354,143 @@ def test_run_warning_and_count_contract(config, codes):
     assert result['estimator']['active_generation_start'] == 0
     assert result['estimator']['active_generation_count'] == len(result['k_history'])
     assert result['estimator']['validated_keff'] is False
+
+
+def synthetic_dataset(**changes):
+    """Deliberately invented fixtures, never evaluated or experimental data."""
+    config = dict(material_id='test:synthetic', name='Synthetic fixture',
+                  data_kind='synthetic', source='unit-test invented constants',
+                  version='1', provenance=('Artificial software test; no scientific provenance.',),
+                  quantities=tuple(MaterialQuantity(name, unit, value) for name, unit, value in (
+                      ('sigma_f', 'barn', .7), ('sigma_a', 'barn', .1),
+                      ('sigma_s', 'barn', .2), ('nu', '1', 2.43), ('mean_free_path', 'cm', 1.))))
+    return MaterialDataset(**(config | changes))
+
+
+def test_pointwise_schema_and_immutable_array_ownership():
+    grid = np.array([1., 2., 4.])
+    values = np.array([.1, .2, .3])
+    dataset = synthetic_dataset(energy_representation='pointwise', energy_grid=grid,
+        quantities=(MaterialQuantity('sigma_f', 'barn', values),
+                    MaterialQuantity('nu', None, status='missing'),
+                    MaterialQuantity('future_channel', 'barn', status='unsupported')))
+    grid[:] = values[:] = 0.
+    np.testing.assert_array_equal(dataset.energy_grid, [1., 2., 4.])
+    np.testing.assert_array_equal(dataset.quantities[0].values, [.1, .2, .3])
+    for array in (dataset.energy_grid, dataset.quantities[0].values):
+        assert array.dtype == np.float64 and array.flags.c_contiguous
+        with pytest.raises(ValueError):
+            array.setflags(write=True)
+    with patch.object(physics, 'transport_batch', side_effect=AssertionError('transport entered')):
+        with pytest.raises(ValueError, match='storage-only'):
+            physics.estimate_k_full(material=dataset)
+
+
+def test_dataset_rejects_inconsistent_arrays_and_energy_descriptions():
+    for grid, values, message in (
+        (np.array([1., 1.]), np.ones(2), 'strictly increasing'),
+        (np.array([2., 1.]), np.ones(2), 'strictly increasing'),
+        (np.array([1., np.nan]), np.ones(2), 'finite'),
+        (np.array([-1., 2.]), np.ones(2), 'nonnegative'),
+        (np.ones((2, 2)), np.ones(2), 'one-dimensional'),
+        (np.array([1., 2.]), np.ones(3), 'match energy_grid'),
+        (np.array([1., 2.]), 1., 'match energy_grid'),
+    ):
+        with pytest.raises(ValueError, match=message):
+            synthetic_dataset(energy_representation='pointwise', energy_grid=grid,
+                              quantities=(MaterialQuantity('sigma_f', 'barn', values),))
+    with pytest.raises(TypeError, match='numeric NumPy array'):
+        synthetic_dataset(energy_representation='pointwise', energy_grid=np.array(['1', '2']))
+    with pytest.raises(ValueError, match='energy_grid=None'):
+        synthetic_dataset(energy_grid=np.array([1., 2.]))
+    with pytest.raises(ValueError, match='must be scalar'):
+        synthetic_dataset(quantities=(MaterialQuantity('sigma_f', 'barn', np.ones(2)),))
+
+
+def test_quantity_units_missing_values_and_unsupported_channels():
+    for config, message in (
+        (dict(name='sigma_f', unit='cm', values=1.), 'unit must be barn'),
+        (dict(name='sigma_f', unit='mb', values=1.), 'unsupported unit'),
+        (dict(name='sigma_f', unit='barn'), 'require unit and values'),
+        (dict(name='nu', unit='1', values=0., status='missing'), 'values=None'),
+        (dict(name='nu', unit='1', values=np.nan), 'finite'),
+        (dict(name='nu', unit='1', values=-1.), 'nonnegative'),
+    ):
+        with pytest.raises(ValueError, match=message):
+            MaterialQuantity(**config)
+    for value in (True, '1', 1j, np.array([True]), np.array(['1']),
+                  np.ma.array([1.], mask=[True])):
+        with pytest.raises(TypeError):
+            MaterialQuantity('nu', '1', value)
+    dataset = synthetic_dataset(quantities=(MaterialQuantity('sigma_f', None, status='missing'),))
+    with pytest.raises(ValueError, match='requires available quantities: sigma_f'):
+        resolve_transport_data(dataset)
+    quantities = synthetic_dataset().quantities
+    with pytest.raises(ValueError, match='does not support available quantities: extra_process'):
+        synthetic_dataset(quantities=quantities + (MaterialQuantity('extra_process', 'barn', 1.),)).get_transport_data()
+    with pytest.raises(ValueError, match='names must be unique'):
+        synthetic_dataset(quantities=quantities + quantities[:1])
+
+
+def test_material_identity_composition_and_provenance_validation():
+    dataset = synthetic_dataset(composition=(('component-A', .25), ('component-B', .75)),
+                                composition_basis='atom_fraction', temperature=300.)
+    assert dataset.composition_basis == 'atom_fraction' and dataset.temperature_unit == 'K'
+    assert dataset.data_kind == 'synthetic' and dataset.version == '1'
+    for changes, message in (
+        (dict(material_id=''), 'material_id'),
+        (dict(material_id='not unique id'), 'whitespace'),
+        (dict(data_kind='real'), 'data_kind'),
+        (dict(source=None), 'source'),
+        (dict(version=''), 'version'),
+        (dict(provenance=()), 'provenance'),
+        (dict(temperature=-1.), 'temperature'),
+        (dict(temperature_unit='C'), 'must be K'),
+        (dict(energy_unit='MeV'), 'must be eV'),
+        (dict(composition_basis='mass_fraction'), 'missing composition'),
+        (dict(composition=(('A', 1.),)), 'explicit basis'),
+        (dict(composition=(('A', .3),), composition_basis='mass_fraction'), 'sum to 1'),
+        (dict(composition=(('A', .5), ('A', .5)), composition_basis='atom_fraction'), 'unique'),
+        (dict(composition=(('A', 1e308), ('B', 1e308)), composition_basis='stoichiometric'), 'finite sum'),
+    ):
+        with pytest.raises(ValueError, match=message):
+            synthetic_dataset(**changes)
+    assert synthetic_dataset(composition=(('A', 2.), ('B', 1.)),
+                             composition_basis='stoichiometric').composition == (('A', 2.), ('B', 1.))
+
+
+def test_existing_presets_have_honest_metadata_and_identical_transport_inputs():
+    ids = set()
+    for key, mat in MATERIALS.items():
+        dataset = get_builtin_dataset(key)
+        assert dataset.material_id not in ids
+        ids.add(dataset.material_id)
+        assert dataset.data_kind == 'educational' and dataset.version is None
+        assert dataset.composition is dataset.temperature is dataset.energy_grid is None
+        assert dataset.composition_basis == 'unknown'
+        old, new = mat.get_transport_data(), resolve_transport_data(dataset)
+        for field in ('sigma_f', 'sigma_a', 'sigma_s', 'nu', 'mean_free_path', 'name'):
+            assert getattr(old, field) == getattr(new, field)
+    key = next(iter(MATERIALS))
+    with patch.object(MATERIALS[key], 'nu', 1.25):
+        assert get_builtin_dataset(key).get_transport_data().nu == 1.25
+    with pytest.raises(ValueError, match='unknown built-in'):
+        get_builtin_dataset('not-a-preset')
+
+
+def test_structured_one_group_dataset_runs_through_worker_without_numerical_changes():
+    dataset = synthetic_dataset()
+    config = dict(n_gen=3, n_source=80, radius=1e9, max_steps=8,
+                  max_samples_per_gen=4, seed=2026)
+    expected = physics.estimate_k_full(material=dataset.get_transport_data(), **config)
+    worker = SimulationWorker()
+    worker.start(physics.estimate_k_full, material=dataset, **config)
+    worker.thread.join(timeout=30)
+    assert not worker.thread.is_alive()
+    state, result = worker.poll()
+    assert state == ExecutionState.COMPLETED
+    for key in ('k_history', 'k_mean', 'k_std', 'generation_stats', 'warnings', 'run_info'):
+        assert result[key] == expected[key]
+    assert 'synthetic:test:synthetic@1' in result['run_info']['material']['data_source']
+    for a, b in zip(result['fiss_frames'], expected['fiss_frames']):
+        np.testing.assert_array_equal(a, b)
