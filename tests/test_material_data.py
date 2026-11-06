@@ -370,3 +370,131 @@ def test_catalog_file_inspection_separates_acquisition_integrity_and_schema(tmp_
         inspect_local_file(path, expected_sha256="0" * 64, checksum_reference="Fixture manifest")
     with pytest.raises(ValueError, match="regular file"):
         inspect_local_file(tmp_path)
+
+
+def test_reference_records_have_scoped_sources_without_replacing_presets():
+    from material import get_reference_dataset
+    water = get_reference_dataset("Вода (H₂O)")
+    graphite = get_reference_dataset("Графит")
+    assert water.state.density == 997.047013 / 1000
+    assert water.temperature == 298.15 and water.state.pressure == 100000.
+    assert water.composition == (("H", 2.), ("O", 1.))
+    assert water.quantities[0].values == 18.0153
+    assert graphite.quantities[0].values == 12.0107
+    assert graphite.quantities[1].status == "missing"
+    assert graphite.state.density is graphite.temperature is graphite.state.pressure is None
+    assert MATERIALS["Вода (H₂O)"].density == 1.
+    assert MATERIALS["Графит"].molar_mass == 12
+    for dataset in (water, graphite):
+        assert dataset.quality.verification_status == "source_checked"
+        assert dataset.quality.validation_status != "scientifically_validated"
+        assert dataset.energy_representation == "not_applicable"
+        assert all(q.uncertainty is None for q in dataset.quantities)
+        for q in dataset.quantities:
+            if q.status == "available":
+                assert q.origin.source_url and q.origin.retrieval_date == "2026-11-06"
+                assert q.applicability_notes
+        with pytest.raises(ValueError):
+            resolve_transport_data(dataset)
+        with pytest.raises(ValueError):
+            resolve_medium_rates(dataset)
+        with pytest.warns(UnverifiedDataWarning), pytest.raises(ValueError):
+            dataset.require_scientific_reference()
+    for key in list(MATERIALS)[:2]:
+        assert get_builtin_dataset(key).quality.verification_status == "legacy_unverified"
+        with pytest.raises(ValueError, match="only"):
+            get_reference_dataset(key)
+
+
+@pytest.mark.parametrize("state", [{"pressure": -1}, {"pressure": True}, {"pressure": float("inf")}, {"pressure_unit": "MPa"}])
+def test_reference_pressure_validation(state):
+    with pytest.raises((ValueError, TypeError)):
+        MaterialState(**state)
+
+
+def test_missing_molar_mass_composition_and_source_checks():
+    from material import get_reference_dataset
+    with pytest.raises(ValueError, match="positive"):
+        MaterialQuantity("molar_mass", "g/mol", 0.)
+    water = get_reference_dataset("Вода (H₂O)")
+    with pytest.raises(ValueError, match="stoichiometric"):
+        replace(water, composition=(("H", 0.), ("O", 1.)))
+    with pytest.raises(ValueError, match="source_checked"):
+        replace(water, origin=DataOrigin())
+    with pytest.raises(ValueError, match="source_checked"):
+        replace(water, data_kind="synthetic")
+    # State provenance alone must not sneak scientific sources into a medium.
+    disguised = replace(abstract_dataset(), state=MaterialState(origin=water.origin))
+    with pytest.raises(ValueError, match="storage-only"):
+        resolve_medium_rates(disguised)
+
+
+def test_material_v2_roundtrip_and_pinned_reference(tmp_path):
+    from material import (get_reference_dataset, export_material_reference, load_material_reference,
+                          material_to_dict, _content_hash)
+    for key in ("Вода (H₂O)", "Графит"):
+        dataset = get_reference_dataset(key)
+        path = tmp_path / (dataset.material_id.split(":")[-1] + ".json")
+        checksum = export_material_reference(dataset, path)
+        restored = load_material_reference(path, expected_sha256=checksum)
+        assert material_to_dict(restored) == material_to_dict(dataset)
+        with pytest.raises(FileExistsError):
+            export_material_reference(dataset, path)
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        raw["payload"]["quantities"][0]["values"] += 1
+        path.write_text(json.dumps(raw), encoding="utf-8")
+        with pytest.raises(ValueError, match="checksum"):
+            load_material_reference(path)
+        raw["content_sha256"] = _content_hash({k: v for k, v in raw.items() if k != "content_sha256"})
+        path.write_text(json.dumps(raw), encoding="utf-8")
+        with pytest.raises(ValueError, match="identity/content"):
+            load_material_reference(path)
+        with pytest.raises(ValueError, match="checksum"):
+            load_material_reference(path, expected_sha256=checksum)
+
+
+def test_material_archive_preserves_table_missing_uncertainty_and_legacy(tmp_path):
+    from material import export_material_reference, load_material_reference, material_to_dict
+    table = replace(abstract_dataset(), quantities=(MaterialQuantity("response", "1", np.array([1., 2.]),
+        uncertainty=ParameterUncertainty(np.array([.1, .2]), "absolute_standard", "invented")),
+        MaterialQuantity("other", None, status="missing")), energy_representation="pointwise", energy_grid=np.array([0., 2.]))
+    for i, dataset in enumerate((table, get_builtin_dataset(next(iter(MATERIALS))))):
+        path = tmp_path / f"{i}.json"
+        export_material_reference(dataset, path)
+        restored = load_material_reference(path)
+        assert material_to_dict(restored) == material_to_dict(dataset)
+    restored = load_material_reference(tmp_path / "0.json")
+    with pytest.raises(ValueError):
+        restored.energy_grid.setflags(write=True)
+    with pytest.raises(ValueError):
+        restored.quantities[0].uncertainty.values[0] = .4
+
+
+def test_averaged_scientific_values_require_explicit_scope():
+    from material import AveragingConditions, material_from_dict, material_to_dict
+    origin = DataOrigin(original_reference="Test-only declaration")
+    review = DataQuality("scientifically_validated", "Test-only review", ("Mock conditions",))
+    dataset = replace(abstract_dataset(), data_kind="evaluated", origin=origin,
+        quantities=(MaterialQuantity("sigma_s", "barn", 1.),))
+    with pytest.raises(ValueError, match="documented averaging"):
+        replace(dataset, quality=review)
+    with pytest.warns(UnverifiedDataWarning), pytest.raises(ValueError):
+        dataset.require_scientific_reference()
+    average = AveragingConditions("flux-weighted integral", "Test-only uniform weight normalized on [0,1] eV",
+        (0., 1.), "Test-only source", ("Mock fixed state",))
+    dataset = replace(dataset, quantities=(replace(dataset.quantities[0], averaging=average),))
+    with pytest.raises(ValueError, match="documented averaging"):
+        replace(dataset, quality=review)
+    with pytest.warns(UnverifiedDataWarning), pytest.raises(ValueError):
+        dataset.require_scientific_reference()
+    assert material_to_dict(material_from_dict(material_to_dict(dataset))) == material_to_dict(dataset)
+    with pytest.raises(ValueError):
+        replace(average, energy_bounds_ev=(1., 0.))
+    with pytest.raises(ValueError):
+        replace(average, assumptions=())
+    with pytest.raises(ValueError, match="own reference"):
+        replace(average, independent_verification="documented")
+    checked = replace(average, independent_verification="documented", verification_reference="Mock independent review")
+    dataset = replace(dataset, composition=(("X", 1.),), composition_basis="atom_fraction", temperature=300.,
+                      quantities=(replace(dataset.quantities[0], averaging=checked),), quality=review)
+    assert dataset.require_scientific_reference() is dataset  # Declaration only; no physical data used.

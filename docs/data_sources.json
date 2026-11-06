@@ -9,10 +9,10 @@
       "source_url": "https://www.nndc.bnl.gov/endf-library/",
       "data_kind": "evaluated",
       "formats": ["ENDF-6"],
-      "checked_on": "2026-10-31",
-      "documentation_urls": ["https://www.nndc.bnl.gov/endfdocs/ENDF-102-2023.pdf"],
+      "checked_on": "2026-11-06",
+      "documentation_urls": ["https://www.nndc.bnl.gov/endf/index.html", "https://www.nndc.bnl.gov/endfdocs/", "https://www.nndc.bnl.gov/endf-releases/"],
       "license": null,
-      "usage_notes": "Release/format documentation inspected. No dataset license established from the inspected pages; check release terms and cite its evaluation/reference. No numerical files downloaded.",
+      "usage_notes": "2026-11-06: Evaluated Nuclear Data File index and ENDF Reports opened; index confirms VIII.1 released 2024-08-30. endf-library landing URL failed on direct open; search index exposed VIII.1/VIII.0/VII.1. Dynamic endf-releases page exposed headings only. ENDF-102-2023.pdf fetch timed out: its content and current errata were NOT verified this session. Evaluations depend on nuclide, reaction, energy, temperature and processing; no universal one-group coefficient follows. Pin release, evaluation revision, original citation and processing. No numerical library files or release checksums checked. License remains unknown.",
       "availability_status": "known_source"
     },
     {
@@ -23,24 +23,24 @@
       "source_url": "https://databank.io.oecd-nea.org/data/jeff/40/",
       "data_kind": "evaluated",
       "formats": ["ENDF-6", "ACE", "PENDF0K", "HDF5", "GENDF-1102", "AMPX"],
-      "checked_on": "2026-10-31",
+      "checked_on": "2026-11-06",
       "documentation_urls": ["https://databank.io.oecd-nea.org/data/jeff/40/"],
       "license": null,
-      "usage_notes": "Raw and processed distributions differ. Release page requests dataset citation DOI 10.82555/e9ajn-a3p20. Artifact-specific reuse/redistribution terms remain to be checked; no blanket license inferred from website access. No numerical files downloaded.",
+      "usage_notes": "Joint Evaluated Fission and Fusion Library version 4.0 release page opened 2026-11-06: official June 2025 release, test-release history link, raw ENDF6 and separately processed ACE/PENDF/HDF5/GENDF/AMPX distributions with different temperatures and processing versions. Citation: JEFF Project (2025), JEFF-4.0 Evaluated Data: neutron data, DOI 10.82555/e9ajn-a3p20. Energy/state/application and processing must be specified; formats are not interchangeable. No numeric files, test-release files, checksums or redistribution license verified.",
       "availability_status": "known_source"
     },
     {
       "library_id": "jendl-5",
       "name": "Japanese Evaluated Nuclear Data Library",
       "organization": "Japan Atomic Energy Agency Nuclear Data Center; JNDC collaboration",
-      "version": "5 (December 2021; pin errata revision separately)",
+      "version": "5 (December 2021); errata page includes updates 17 and 18 dated 2026-03-21",
       "source_url": "https://wwwndc.jaea.go.jp/jendl/jendl.html",
       "data_kind": "evaluated",
       "formats": ["ENDF-6"],
-      "checked_on": "2026-10-31",
-      "documentation_urls": ["https://wwwndc.jaea.go.jp/jendl/j5/j5.html"],
+      "checked_on": "2026-11-06",
+      "documentation_urls": ["https://wwwndc.jaea.go.jp/", "https://wwwndc.jaea.go.jp/jendl/j5/j5.html", "https://wwwndc.jaea.go.jp/jendl/j5/JENDL-5_Errata.html"],
       "license": null,
-      "usage_notes": "Release page requests O. Iwamoto et al., JENDL-5, DOI 10.1080/00223131.2022.2141903. Reuse/redistribution license was not established from inspected release pages. No numerical files downloaded.",
+      "usage_notes": "JAEA homepage, Overview of JENDL-5 and Errata of JENDL-5 sublibraries opened 2026-11-06. Evaluated ENDF-6; pointwise 0 K and 300 K distributions are distinct from raw evaluations. Errata page includes neutron update-17 and proton update-18 (2026-03-21). Release page requests O. Iwamoto et al., Japanese evaluated nuclear data library version 5: JENDL-5, JNST 60 (2023), DOI 10.1080/00223131.2022.2141903; article itself not opened. Pin sublibrary and update revision. No numerical files, checksums or redistribution license verified.",
       "availability_status": "known_source"
     },
     {
@@ -51,10 +51,10 @@
       "source_url": "https://openmc.org/data/",
       "data_kind": "derived",
       "formats": ["HDF5", "XML index", "tar.xz archive"],
-      "checked_on": "2026-10-31",
-      "documentation_urls": ["https://docs.openmc.org/en/latest/pythonapi/data.html", "https://docs.openmc.org/en/latest/io_formats/nuclear_data.html"],
+      "checked_on": "2026-11-06",
+      "documentation_urls": ["https://docs.openmc.org/en/latest/usersguide/data.html", "https://docs.openmc.org/en/latest/io_formats/nuclear_data.html", "https://docs.openmc.org/en/latest/usersguide/materials.html", "https://docs.openmc.org/en/latest/usersguide/settings.html"],
       "license": null,
-      "usage_notes": "Record parent evaluation AND processing recipe/version; OpenMC software license is not a license for every data archive. Archive revision, checksum and dataset redistribution terms are not verified. No numerical files downloaded.",
+      "usage_notes": "Cross sections download page plus Data Configuration, Nuclear Data File Formats, Material Compositions and Execution Settings opened 2026-11-06. Live latest docs are not a pinned software release. ENDF to ACE via NJOY then HDF5 is processing, not a new measurement. ENDF/B-VIII.1 uses NJOY2016.78 and six neutron temperatures (250,293.6,600,900,1200,2500 K); thermal scattering has source-specific temperatures. Continuous-energy XML index and multigroup HDF5 are distinct contracts. HDF5 is hierarchical storage, not a validity certificate. OpenMC JENDL-5 archive says through update-16 while JAEA errata now includes later updates. No archives, checksums, license or actual runtime processing verified.",
       "availability_status": "known_source"
     },
     {
@@ -65,10 +65,10 @@
       "source_url": "https://www-nds.iaea.org/exfor/",
       "data_kind": "experimental",
       "formats": ["EXFOR fixed-width text", "JSON", "XML", "CSV"],
-      "checked_on": "2026-10-31",
-      "documentation_urls": ["https://nds.iaea.org/exfor/x4guide/API/", "https://github.com/IAEA-NDS/exfor_master/blob/main/README.md"],
+      "checked_on": "2026-11-06",
+      "documentation_urls": ["https://nds.iaea.org/exfor/x4guide/API/", "https://www-nds.iaea.org/nrdc/"],
       "license": "CC BY 4.0 for IAEA-NDS/exfor_master files, as stated in that repository; not inferred for every associated product",
-      "usage_notes": "Main URL returned no readable page content in the browser tool. IAEA API documentation and official repository README inspected. Cite original publication plus entry/subentry/revision. No API response or numerical file downloaded; API functionality not tested.",
+      "usage_notes": "2026-11-06: EXFOR main URL returned no readable content. Web API for EXFOR, ENDF, IBANDL (v.2023-10-19) and International Network of Nuclear Reaction Data Centres pages opened. NRDC explicitly distinguishes compiled experimental EXFOR measurements from evaluated ENDF collections. Retain original publication, entry/subentry/pointer, revision, measurement conditions and reported errors; API can provide original or interpreted/renormalized outputs. No numerical API response or file downloaded/tested. Repository license statement retained from the 2026-10-31 audit, not rechecked this session.",
       "availability_status": "known_source"
     }
   ]

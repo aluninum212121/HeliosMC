@@ -837,3 +837,369 @@ def simulate_slab(layers, edges_cm, n_histories=10000, *, seed=None,
             numba_version=getattr(sys.modules.get("numba"), "__version__", None) if use_numba else None))
     result["timing"]["total_seconds"] = perf_counter() - started
     return result
+
+
+# Research I/O stays outside both transport kernels. No new reaction model.
+SLAB_EXPORT_SCHEMA = "heliosmc.slab-experiment.v1"
+SLAB_CONFIGURATION_SCHEMA = "heliosmc.slab-configuration.v1"
+_SLAB_OUTCOMES = ("absorbed", "escaped_left", "escaped_right", "collision_limit", "numeric_limit")
+
+
+def _research_code_hashes():
+    import hashlib
+    from pathlib import Path
+    return {name: hashlib.sha256((Path(__file__).parent / name).read_bytes()).hexdigest()
+            for name in ("physics.py", "material.py", "numba_compat.py")}
+
+
+def _slab_features(config):
+    """Whitelist inputs; no statistics, timing, seed or provenance text in X."""
+    from material import material_from_dict
+    p = config["parameters"]
+    return dict(rates_per_cm=[list(resolve_medium_rates(material_from_dict(d))) for d in config["layers"]],
+        edges_cm=p["edges_cm"], source_x_cm=p["source_x"], source_mu=p["source_mu"],
+        n_histories=p["n_histories"], max_collisions=p["max_collisions"])
+
+
+def _slab_group_id(config):
+    from material import _content_hash
+    f = _slab_features(config)
+    # Group all repeats of the same mathematical problem, including different
+    # seeds, populations, budgets, labels, provenance and execution backends.
+    f = {k: v for k, v in f.items() if k not in ("n_histories", "max_collisions")}
+    return _content_hash(dict(algorithm_version=config["algorithm_version"], problem=f))
+
+
+def create_slab_configuration(scenario_id, layers, edges_cm, n_histories=10000, *,
+                              verification="none", **options):
+    """Validate and freeze inputs BEFORE running; choose verification in advance.
+
+    Supported options are simulate_slab keyword inputs except cancellation.
+    None seed is resolved now and archived. A zero-history validation call uses
+    the existing public checks without executing a transport history.
+    """
+    from material import MATERIAL_SCHEMA, _text, _json_data, _content_hash
+    _text("scenario_id", scenario_id)
+    _integer("n_histories", n_histories)
+    if n_histories > np.iinfo(np.int64).max:
+        raise ValueError("n_histories exceeds int64 counting capacity")
+    if set(options) - {"seed", "max_collisions", "max_samples", "batch_size", "source_x",
+                       "source_mu", "confidence", "backend", "max_memory_bytes"}:
+        raise ValueError("unsupported configuration option")
+    if verification not in ("none", "pure_absorption_v1"):
+        raise ValueError("unsupported verification problem")
+    if verification == "pure_absorption_v1" and any(resolve_medium_rates(d)[1] != 0 for d in layers):
+        raise ValueError("pure absorption verification requires zero scattering")
+    info = simulate_slab(layers, edges_cm, n_histories=0, **options)["run_info"]
+    parameters = dict(edges_cm=info["edges_cm"], n_histories=int(n_histories), seed=info["effective_seed"],
+        max_collisions=info["max_collisions"], max_samples=info["max_samples"], batch_size=info["batch_size"],
+        source_x=info["source_x_cm"], source_mu=info["source_mu"], confidence=info["confidence"],
+        backend="numba" if info["backend"] == "numba" else "python", max_memory_bytes=info["max_memory_bytes"])
+    config = dict(schema_version=SLAB_CONFIGURATION_SCHEMA, material_schema_version=MATERIAL_SCHEMA,
+        scenario_id=scenario_id, algorithm_version="abstract_slab_v1", code_sha256=_research_code_hashes(),
+        environment={k: info[k] for k in ("python_version", "numpy_version", "scipy_version", "numba_version")},
+        rng="PCG64", requested_seed=info["seed"], parameters=parameters, layers=_json_data(info["layers"]),
+        verification_protocol=dict(problem_id=verification, alpha=1e-6,
+            criterion="two-sided exact binomial p-value >= alpha; no unfinished histories",
+            assumptions=["Independent histories", "Piecewise constant nonnegative absorption",
+                         "Zero scattering", "Fixed source position and nonzero direction cosine",
+                         "Absorbing outer boundaries; no multiplication"] if verification != "none" else []))
+    config["group_id"] = _slab_group_id(config)
+    config["configuration_id"] = _content_hash(config)
+    return config
+
+
+def _validate_slab_configuration(config, *, replay=False):
+    from material import MATERIAL_SCHEMA, material_from_dict, _object_fields, _content_hash, _sha256, _text
+    names = ("schema_version", "material_schema_version", "scenario_id", "algorithm_version", "code_sha256",
+             "environment", "rng", "requested_seed", "parameters", "layers", "verification_protocol",
+             "group_id", "configuration_id")
+    _object_fields(config, "configuration", names, names)
+    if (config["schema_version"] != SLAB_CONFIGURATION_SCHEMA or config["material_schema_version"] != MATERIAL_SCHEMA
+            or config["algorithm_version"] != "abstract_slab_v1" or config["rng"] != "PCG64"):
+        raise ValueError("unsupported configuration version or RNG")
+    _text("scenario_id", config["scenario_id"])
+    _sha256(config["configuration_id"])
+    if _content_hash({k: v for k, v in config.items() if k != "configuration_id"}) != config["configuration_id"]:
+        raise ValueError("configuration checksum mismatch")
+    p = config["parameters"]
+    keys = ("edges_cm", "n_histories", "seed", "max_collisions", "max_samples", "batch_size",
+            "source_x", "source_mu", "confidence", "backend", "max_memory_bytes")
+    _object_fields(p, "parameters", keys, keys)
+    _integer("n_histories", p["n_histories"])
+    _integer("seed", p["seed"])
+    if p["n_histories"] > np.iinfo(np.int64).max:
+        raise ValueError("n_histories exceeds int64 counting capacity")
+    if config["requested_seed"] is not None:
+        _integer("requested_seed", config["requested_seed"])
+        if config["requested_seed"] != p["seed"]:
+            raise ValueError("requested and effective seed disagree")
+    if p["backend"] not in ("numba", "python"):
+        raise ValueError("archive backend must be resolved")
+    if not isinstance(config["layers"], list) or not config["layers"]:
+        raise ValueError("configuration requires layers")
+    layers = [material_from_dict(d) for d in config["layers"]]
+    # Read archives even without Numba installed; replay still requires its backend.
+    checked = simulate_slab(layers, **(p | dict(n_histories=0, backend="python")))["run_info"]
+    if config["group_id"] != _slab_group_id(config):
+        raise ValueError("experiment group mismatch")
+    protocol = config["verification_protocol"]
+    _object_fields(protocol, "verification_protocol", ("problem_id", "alpha", "criterion", "assumptions"),
+                   ("problem_id", "alpha", "criterion", "assumptions"))
+    if protocol["problem_id"] not in ("none", "pure_absorption_v1") or type(protocol["alpha"]) is not float or protocol["alpha"] != 1e-6:
+        raise ValueError("unsupported fixed verification protocol")
+    if protocol["criterion"] != "two-sided exact binomial p-value >= alpha; no unfinished histories":
+        raise ValueError("verification criterion changed")
+    expected_assumptions = ["Independent histories", "Piecewise constant nonnegative absorption",
+        "Zero scattering", "Fixed source position and nonzero direction cosine",
+        "Absorbing outer boundaries; no multiplication"] if protocol["problem_id"] != "none" else []
+    if protocol["assumptions"] != expected_assumptions:
+        raise ValueError("verification assumptions changed")
+    if protocol["problem_id"] != "none" and any(resolve_medium_rates(d)[1] != 0 for d in layers):
+        raise ValueError("verification requires zero scattering")
+    _object_fields(config["code_sha256"], "code_sha256", _research_code_hashes(), _research_code_hashes())
+    for digest in config["code_sha256"].values():
+        _sha256(digest)
+    env_keys = ("python_version", "numpy_version", "scipy_version", "numba_version")
+    _object_fields(config["environment"], "environment", env_keys, env_keys)
+    for k, value in config["environment"].items():
+        if k != "numba_version" or value is not None:
+            _text(k, value)
+    if replay:
+        if config["code_sha256"] != _research_code_hashes():
+            raise ValueError("replay requires the archived code revision")
+        current = {k: checked[k] for k in env_keys}
+        if p["backend"] == "numba":
+            current["numba_version"] = getattr(sys.modules.get("numba"), "__version__", None)
+        if current != config["environment"]:
+            raise ValueError("replay requires the archived software environment")
+    return layers
+
+
+def _slab_verification(config, result):
+    """Independent Beer-Lambert oracle; the transport kernel is never reused."""
+    from scipy.stats import binomtest
+    protocol = config["verification_protocol"]
+    if protocol["problem_id"] == "none":
+        return None
+    p, features = config["parameters"], _slab_features(config)
+    edges, rates = np.asarray(p["edges_cm"]), np.asarray(features["rates_per_cm"])[:, 0]
+    x, mu = p["source_x"], p["source_mu"]
+    widths = (np.maximum(0., edges[1:] - np.maximum(edges[:-1], x)) if mu > 0 else
+              np.maximum(0., np.minimum(edges[1:], x) - edges[:-1]))
+    with np.errstate(over="ignore"):
+        expected = float(np.exp(-np.dot(rates, widths) / abs(mu)))
+    outcome = "escaped_right" if mu > 0 else "escaped_left"
+    estimate = result["estimates"][outcome]
+    value = estimate["estimate"]
+    eligible = value is not None and not result["unfinished_histories"]
+    pvalue = float(binomtest(result["outcome_counts"][outcome], p["n_histories"], expected).pvalue) if eligible else None
+    return dict(problem_id=protocol["problem_id"], assumptions=protocol["assumptions"],
+        configuration_id=config["configuration_id"], outcome=outcome, analytic_result=expected,
+        monte_carlo_estimate=value, standard_error=estimate["standard_error"],
+        confidence_interval=estimate["confidence_interval"], absolute_error=abs(value-expected) if eligible else None,
+        p_value=pvalue, alpha=protocol["alpha"], criterion=protocol["criterion"],
+        status=("passed" if pvalue >= protocol["alpha"] else "failed") if eligible else "inconclusive",
+        scope="mathematical_verification_only; not real-material scientific validation")
+
+
+def _slab_ml_record(config, result, verification):
+    eligible = result["histories_complete"] and result["processed_histories"] > 0
+    return dict(features=_slab_features(config),
+        targets={k: v["estimate"] for k, v in result["estimates"].items()},
+        metadata=dict(group_id=config["group_id"], configuration_id=config["configuration_id"],
+            algorithm_version=config["algorithm_version"], seed=config["parameters"]["seed"],
+            data_sources=[dict(material_id=d["material_id"], data_kind=d["data_kind"], source=d["source"],
+                               version=d["version"]) for d in config["layers"]],
+            verification_status=verification["status"] if verification else "not_checked",
+            uncertainty=result["estimates"], warnings=result["warnings"],
+            eligible_for_training=eligible and verification is not None and verification["status"] == "passed"))
+
+
+def run_slab_experiment(config, *, cancel_event=None):
+    """Run/replay a frozen configuration; no trajectories enter the archive.
+
+    Failures/cancellation propagate, never fabricate a completed experiment.
+    """
+    from material import _json_data
+    config = _json_data(config)  # Own the snapshot; do not mutate caller data.
+    layers = _validate_slab_configuration(config, replay=True)
+    result = simulate_slab(layers, **config["parameters"], cancel_event=cancel_event)
+    result = {k: v for k, v in result.items() if k not in ("sampled_paths_cm", "sampled_path_fates")}
+    result["sampled_paths_omitted"] = True
+    verification = _slab_verification(config, result)
+    return _json_data(dict(configuration=config, result=result, verification=verification,
+                           ml_record=_slab_ml_record(config, result, verification)))
+
+
+def _validate_slab_experiment(experiment):
+    from material import _object_fields, _json_data, _content_hash
+    _object_fields(experiment, "experiment", ("configuration", "result", "verification", "ml_record"),
+                   ("configuration", "result", "verification", "ml_record"))
+    config, result = experiment["configuration"], experiment["result"]
+    _validate_slab_configuration(config)
+    names = ("algorithm_version", "execution_status", "outcome_counts", "processed_histories",
+             "completed_histories", "unfinished_histories", "histories_complete", "estimates", "warnings",
+             "limitations", "timing", "run_info", "sampled_paths_omitted")
+    _object_fields(result, "result", names, names)
+    if result["algorithm_version"] != config["algorithm_version"] or result["execution_status"] != "completed":
+        raise ValueError("unsupported result status/version")
+    counts = result["outcome_counts"]
+    _object_fields(counts, "outcome_counts", _SLAB_OUTCOMES, _SLAB_OUTCOMES)
+    for k, value in counts.items():
+        _integer(k, value)
+    n = config["parameters"]["n_histories"]
+    unfinished = counts["collision_limit"] + counts["numeric_limit"]
+    for k, expected in (("processed_histories", n), ("completed_histories", n-unfinished), ("unfinished_histories", unfinished)):
+        _integer(k, result[k])
+        if result[k] != expected:
+            raise ValueError("history count mismatch")
+    if sum(counts.values()) != n or type(result["histories_complete"]) is not bool or result["histories_complete"] != (unfinished == 0):
+        raise ValueError("outcome counts do not reconcile")
+    if result["sampled_paths_omitted"] is not True:
+        raise ValueError("trajectory arrays are unsupported in research archives")
+    expected = {k: summarize_binomial(counts[k], n, config["parameters"]["confidence"], unfinished) for k in _SLAB_OUTCOMES[:3]}
+    if _content_hash(expected) != _content_hash(result["estimates"]):
+        raise ValueError("statistics disagree with outcome counts")
+    expected_warnings = (["no_histories"] if n == 0 else []) + (["collision_limit_reached"] if counts["collision_limit"] else []) + (["numerical_resolution_limit"] if counts["numeric_limit"] else [])
+    if result["warnings"] != expected_warnings or result["limitations"] != ["abstract_nonreactive_model", "piecewise_constant_rates", "isotropic_scattering", "marginal_not_simultaneous_intervals"]:
+        raise ValueError("warnings or limitations disagree with result")
+    _object_fields(result["timing"], "timing", ("transport_seconds", "total_seconds"), ("transport_seconds", "total_seconds"))
+    for value in result["timing"].values():
+        if _real_scalar("timing", value) < 0:
+            raise ValueError("negative runtime")
+    if result["timing"]["transport_seconds"] > result["timing"]["total_seconds"]:
+        raise ValueError("transport time exceeds total time")
+    info, p = result["run_info"], config["parameters"]
+    expected_info = dict(seed=p["seed"], effective_seed=p["seed"], rng="PCG64", n_histories=n,
+        max_collisions=p["max_collisions"], max_samples=p["max_samples"], batch_size=p["batch_size"],
+        source_x_cm=p["source_x"], source_mu=p["source_mu"], confidence=p["confidence"],
+        max_memory_bytes=p["max_memory_bytes"], edges_cm=p["edges_cm"], layers=config["layers"],
+        backend="numba" if p["backend"] == "numba" else "python_numpy", **config["environment"])
+    if _content_hash(info) != _content_hash(expected_info):
+        raise ValueError("result configuration/environment mismatch")
+    verification = _json_data(_slab_verification(config, result))
+    if _content_hash(verification) != _content_hash(experiment["verification"]):
+        raise ValueError("verification record mismatch")
+    if _content_hash(_slab_ml_record(config, result, verification)) != _content_hash(experiment["ml_record"]):
+        raise ValueError("ML record mismatch or target leakage")
+
+
+def _slab_csv_bytes(experiment):
+    import csv
+    import io
+    stream = io.StringIO(newline="")
+    writer = csv.writer(stream, lineterminator="\n")
+    writer.writerow(["configuration_id", "outcome", "count", "estimate", "standard_error", "ci_low", "ci_high", "unavailable_reason"])
+    for name in _SLAB_OUTCOMES:
+        estimate = experiment["result"]["estimates"].get(name, {})
+        ci = estimate.get("confidence_interval") or (None, None)
+        writer.writerow([experiment["configuration"]["configuration_id"], name,
+            experiment["result"]["outcome_counts"][name], estimate.get("estimate"),
+            estimate.get("standard_error"), *ci, estimate.get("unavailable_reason")])
+    return stream.getvalue().encode("utf-8")
+
+
+def export_slab_experiment(experiment, directory):
+    """Write JSON manifest + CSV results + numeric NPZ into a NEW directory.
+
+    Exact sidecar hashes and semantic cross-checks protect against accidental
+    corruption. Retain the returned manifest hash independently for tamper checks.
+    Existing directories/files are never overwritten. No pickle or trajectories.
+    """
+    import hashlib
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+    from material import _write_archive, _json_data
+    experiment = _json_data(experiment)
+    _validate_slab_experiment(experiment)
+    directory = Path(directory)
+    if directory.exists():
+        raise FileExistsError(f"export destination already exists: {directory}")
+    with TemporaryDirectory(prefix=".heliosmc-export-", dir=directory.parent) as temporary:
+        staging = Path(temporary) / "bundle"
+        staging.mkdir()
+        csv_path, arrays_path = staging / "results.csv", staging / "arrays.npz"
+        csv_path.write_bytes(_slab_csv_bytes(experiment))
+        features = _slab_features(experiment["configuration"])
+        with arrays_path.open("xb") as stream:
+            np.savez_compressed(stream, edges_cm=np.asarray(features["edges_cm"], dtype="<f8"),
+                rates_per_cm=np.asarray(features["rates_per_cm"], dtype="<f8"),
+                outcome_counts=np.asarray([experiment["result"]["outcome_counts"][k] for k in _SLAB_OUTCOMES], dtype="<i8"))
+        sidecars = {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in (csv_path, arrays_path)}
+        digest = _write_archive(staging / "experiment.json", SLAB_EXPORT_SCHEMA,
+                               dict(experiment=experiment, sidecar_sha256=sidecars))
+        staging.rename(directory)
+    return digest
+
+
+def load_slab_experiment(directory, *, expected_sha256=None):
+    """Bounded, strict reload; cross-check every array/table against JSON.
+
+    Embedded hashes do not authenticate an author; expected_sha256 must come
+    from a trusted independent record to detect coordinated modification.
+    """
+    import hashlib
+    import io
+    import zipfile
+    from pathlib import Path
+    from material import _load_archive, _object_fields, _MAX_JSON_BYTES
+    directory = Path(directory)
+    payload = _load_archive(directory / "experiment.json", SLAB_EXPORT_SCHEMA, expected_sha256=expected_sha256)
+    _object_fields(payload, "payload", ("experiment", "sidecar_sha256"), ("experiment", "sidecar_sha256"))
+    _object_fields(payload["sidecar_sha256"], "sidecars", ("results.csv", "arrays.npz"), ("results.csv", "arrays.npz"))
+    experiment = payload["experiment"]
+    _validate_slab_experiment(experiment)
+    raw = {}
+    for name, expected in payload["sidecar_sha256"].items():
+        with (directory / name).open("rb") as stream:
+            raw[name] = stream.read(_MAX_JSON_BYTES + 1)
+        if len(raw[name]) > _MAX_JSON_BYTES or hashlib.sha256(raw[name]).hexdigest() != expected:
+            raise ValueError("sidecar size/checksum mismatch")
+    if raw["results.csv"] != _slab_csv_bytes(experiment):
+        raise ValueError("CSV result content mismatch")
+    features = _slab_features(experiment["configuration"])
+    expected_arrays = dict(edges_cm=np.asarray(features["edges_cm"], dtype="<f8"),
+        rates_per_cm=np.asarray(features["rates_per_cm"], dtype="<f8"),
+        outcome_counts=np.asarray([experiment["result"]["outcome_counts"][k] for k in _SLAB_OUTCOMES], dtype="<i8"))
+    try:
+        with zipfile.ZipFile(io.BytesIO(raw["arrays.npz"])) as archive:
+            entries = archive.infolist()
+            if (len(entries) != 3 or {e.filename for e in entries} != {k+".npy" for k in expected_arrays}
+                    or sum(e.file_size for e in entries) > _MAX_JSON_BYTES):
+                raise ValueError("unsupported NPZ members or expanded size")
+            # Inspect each NPY header before allocation: even a tiny ZIP can
+            # declare an enormous shape. Only numeric arrays of exact shape/type.
+            for name, expected in expected_arrays.items():
+                with archive.open(name+".npy") as stream:
+                    if np.lib.format.read_magic(stream) != (1, 0):
+                        raise ValueError("unsupported NPY version")
+                    shape, fortran, dtype = np.lib.format.read_array_header_1_0(stream, max_header_size=1024)
+                    if shape != expected.shape or dtype != expected.dtype or fortran:
+                        raise ValueError("NPZ array shape/dtype mismatch")
+        with np.load(io.BytesIO(raw["arrays.npz"]), allow_pickle=False) as arrays:
+            for name, expected in expected_arrays.items():
+                if not np.array_equal(arrays[name], expected):
+                    raise ValueError("NPZ array content mismatch")
+    except (OSError, EOFError, zipfile.BadZipFile) as exc:
+        raise ValueError("invalid numeric NPZ archive") from exc
+    return experiment
+
+
+def split_slab_groups(experiments, *, test_fraction=.2):
+    """Deterministic group holdout; repeats cannot cross train/test boundaries.
+
+    Only mathematically checked complete runs are eligible. Tiny collections
+    can yield an empty partition; no target-aware balancing is performed.
+    """
+    fraction = _real_scalar("test_fraction", test_fraction)
+    if not 0 < fraction < 1:
+        raise ValueError("test_fraction must lie strictly between zero and one")
+    train, test = [], []
+    for experiment in experiments:
+        _validate_slab_experiment(experiment)
+        if not experiment["ml_record"]["metadata"]["eligible_for_training"]:
+            raise ValueError("training requires complete mathematically verified synthetic/educational runs")
+        group = experiment["configuration"]["group_id"]
+        (test if int(group[:16], 16) / 2**64 < fraction else train).append(experiment)
+    return train, test

@@ -10,8 +10,8 @@ import math
 import hashlib
 import json
 import warnings
-from dataclasses import dataclass, field, fields, replace
-from datetime import date
+from dataclasses import asdict, dataclass, field, fields, replace
+from datetime import date, datetime, timezone
 from numbers import Real
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -89,7 +89,7 @@ def _readonly_vector(field, values):
     return np.frombuffer(values.tobytes(), dtype=np.float64)
 
 
-_DATA_KINDS = ("educational", "synthetic", "legacy", "experimental", "evaluated", "derived")
+_DATA_KINDS = ("educational", "synthetic", "legacy", "experimental", "evaluated", "derived", "reference")
 
 
 def _notes(name, values):
@@ -199,10 +199,16 @@ class MaterialState:
     origin: DataOrigin | None = None
     density_range: tuple[float, float] | None = None
     temperature_range: tuple[float, float] | None = None
+    pressure: float | None = None
+    pressure_unit: str = "Pa"
 
     def __post_init__(self):
         if self.density_unit != "g/cm^3":
             raise ValueError("density_unit must be g/cm^3; convert explicitly")
+        if self.pressure_unit != "Pa":
+            raise ValueError("pressure_unit must be Pa; convert explicitly")
+        if self.pressure is not None:
+            object.__setattr__(self, "pressure", _nonnegative("pressure", self.pressure))
         if self.physical_state not in ("unknown", "solid", "liquid", "gas", "plasma", "abstract"):
             raise ValueError("unsupported physical_state")
         if self.origin is not None and not isinstance(self.origin, DataOrigin):
@@ -235,8 +241,11 @@ class DataQuality:
     validation_reference: str | None = None
     applicability_notes: tuple[str, ...] = ()
     known_limitations: tuple[str, ...] = ()
+    verification_status: str = "unverified"
 
     def __post_init__(self):
+        if self.verification_status not in ("unverified", "source_checked", "legacy_unverified"):
+            raise ValueError("unsupported verification_status")
         if self.validation_status not in ("unverified", "schema_validated", "scientifically_validated"):
             raise ValueError("unsupported validation_status")
         _optional_text("validation_reference", self.validation_reference)
@@ -249,6 +258,40 @@ class DataQuality:
 
 class UnverifiedDataWarning(UserWarning):
     """A requested scientific reference lacks documented validation."""
+
+
+@dataclass(frozen=True)
+class AveragingConditions:
+    """Storage-only contract for a published average; never computes rates.
+
+    State/composition belong to the enclosing dataset. Weighting must identify
+    the spectrum and normalization, not just say 'thermal' or 'one group'.
+    """
+    method: str
+    weighting: str
+    energy_bounds_ev: tuple[float, float]
+    reference: str
+    assumptions: tuple[str, ...]
+    independent_verification: str = "unverified"
+    verification_reference: str | None = None
+
+    def __post_init__(self):
+        for name in ("method", "weighting", "reference"):
+            _text(name, getattr(self, name))
+        if not isinstance(self.energy_bounds_ev, (tuple, list)) or len(self.energy_bounds_ev) != 2:
+            raise ValueError("averaging requires two energy bounds in eV")
+        lo, hi = (_nonnegative("energy bound", v) for v in self.energy_bounds_ev)
+        if lo >= hi:
+            raise ValueError("averaging energy bounds must increase")
+        object.__setattr__(self, "energy_bounds_ev", (lo, hi))
+        object.__setattr__(self, "assumptions", _notes("averaging assumptions", self.assumptions))
+        if not self.assumptions:
+            raise ValueError("averaging assumptions are required")
+        if self.independent_verification not in ("unverified", "documented"):
+            raise ValueError("unsupported independent_verification")
+        _optional_text("verification_reference", self.verification_reference)
+        if self.independent_verification == "documented" and self.verification_reference is None:
+            raise ValueError("documented independent verification requires its own reference")
 
 
 @dataclass(frozen=True, eq=False)
@@ -269,6 +312,7 @@ class MaterialQuantity:
     origin: DataOrigin | None = None
     uncertainty: ParameterUncertainty | None = None
     applicability_notes: tuple[str, ...] = ()
+    averaging: AveragingConditions | None = None
 
     def __post_init__(self):
         _text("quantity.name", self.name)
@@ -277,6 +321,8 @@ class MaterialQuantity:
             raise ValueError("quantity.status must be available, missing or unsupported")
         if not isinstance(self.description, str):
             raise TypeError("quantity.description must be a string")
+        if self.averaging is not None and not isinstance(self.averaging, AveragingConditions):
+            raise TypeError("averaging must be AveragingConditions or None")
         if self.data_kind is not None and self.data_kind not in _DATA_KINDS:
             raise ValueError(f"quantity.data_kind must be one of {_DATA_KINDS}")
         if self.origin is not None and not isinstance(self.origin, DataOrigin):
@@ -305,6 +351,8 @@ class MaterialQuantity:
                  if isinstance(self.values, np.ndarray)
                  else _nonnegative(self.name, self.values))
         object.__setattr__(self, "values", value)
+        if self.name == "molar_mass" and np.any(np.asarray(value) <= 0):
+            raise ValueError("molar_mass must be positive")
         if self.uncertainty is not None:
             if np.shape(self.uncertainty.values) != np.shape(value):
                 raise ValueError(f"{self.name}: uncertainty must match values shape; no broadcasting")
@@ -357,7 +405,7 @@ class MaterialDataset:
         if self.data_kind not in _DATA_KINDS:
             raise ValueError(f"data_kind must be one of {_DATA_KINDS}")
         _optional_text("chemical_formula", self.chemical_formula)
-        if self.material_category not in ("unspecified", "component", "mixture", "abstract", "legacy_preset"):
+        if self.material_category not in ("unspecified", "component", "compound", "mixture", "abstract", "legacy_preset"):
             raise ValueError("unsupported material_category")
         for name, expected in (("state", MaterialState), ("origin", DataOrigin), ("quality", DataQuality)):
             if not isinstance(getattr(self, name), expected):
@@ -366,6 +414,12 @@ class MaterialDataset:
             raise TypeError("local_file must be LocalDataFile or None")
         if self.data_kind in ("legacy", "synthetic", "educational") and self.quality.validation_status == "scientifically_validated":
             raise ValueError("legacy/synthetic/educational data cannot be labelled scientifically validated")
+        if self.quality.verification_status == "source_checked":
+            if self.data_kind in ("legacy", "synthetic", "educational"):
+                raise ValueError("legacy/synthetic/educational data cannot be source_checked")
+            if (self.origin.source_url is None or self.origin.original_reference is None
+                    or self.origin.retrieval_date is None or not self.quality.applicability_notes):
+                raise ValueError("source_checked requires source URL, reference, date and applicability")
         if self.data_kind == "derived" and self.origin.processing_description is None:
             raise ValueError("derived datasets require processing_description and parent provenance")
         if self.version is not None:
@@ -392,11 +446,20 @@ class MaterialDataset:
         if len({q.name for q in self.quantities}) != len(self.quantities):
             raise ValueError("quantity names must be unique within a dataset")
         object.__setattr__(self, "quantities", tuple(self.quantities))
+        if self.quality.verification_status == "source_checked":
+            for q in self.quantities:
+                if q.status == "available" and (q.data_kind in ("legacy", "synthetic", "educational")
+                        or q.origin is None or q.origin.source_url is None
+                        or q.origin.original_reference is None or q.origin.retrieval_date is None
+                        or not q.applicability_notes):
+                    raise ValueError("source_checked quantities require individual provenance and applicability")
         density = next((q for q in self.quantities if q.name == "density" and q.status == "available"), None)
         if density is not None and self.state.density is not None:
             if isinstance(density.values, np.ndarray) or density.values != self.state.density:
                 raise ValueError("density quantity conflicts with state.density")
-        if self.energy_representation == "one_group":
+            if self.state.origin is not None and density.origin is not None and self.state.origin != density.origin:
+                raise ValueError("density quantity conflicts with state provenance")
+        if self.energy_representation in ("one_group", "not_applicable"):
             if self.energy_grid is not None:
                 raise ValueError("one_group must have energy_grid=None; no energy lookup is implied")
             if any(isinstance(q.values, np.ndarray) for q in self.quantities):
@@ -411,7 +474,19 @@ class MaterialDataset:
                                                 or q.values.shape != grid.shape):
                     raise ValueError(f"{q.name}: pointwise values must match energy_grid shape {grid.shape}")
         else:
-            raise ValueError("energy_representation must be one_group or pointwise")
+            raise ValueError("energy_representation must be one_group, pointwise or not_applicable")
+        if self.energy_representation == "not_applicable" and any(
+                q.name in ("sigma_f", "sigma_a", "sigma_s", "nu", "mean_free_path",
+                           "absorption_rate", "scattering_rate") and q.status == "available"
+                for q in self.quantities):
+            raise ValueError("interaction quantities require an explicit energy representation")
+        if self.quality.validation_status == "scientifically_validated" and self.energy_representation == "one_group":
+            nuclear_averages = [q for q in self.quantities if q.status == "available"
+                                and q.name in ("sigma_f", "sigma_a", "sigma_s")]
+            if nuclear_averages and (self.temperature is None or self.composition is None or any(
+                    q.averaging is None or q.averaging.independent_verification != "documented"
+                    for q in nuclear_averages)):
+                raise ValueError("scientifically validated nuclear averages require state, composition and documented averaging review")
 
     def _validate_composition(self):
         bases = ("unknown", "atom_fraction", "mass_fraction", "stoichiometric")
@@ -430,6 +505,8 @@ class MaterialDataset:
             component, amount = entry
             _text("composition component", component)
             components.append((component, _nonnegative("composition amount", amount)))
+            if self.composition_basis == "stoichiometric" and amount == 0:
+                raise ValueError("stoichiometric amounts must be positive")
         if len({name for name, _ in components}) != len(components):
             raise ValueError("composition components must be unique")
         try:
@@ -445,7 +522,7 @@ class MaterialDataset:
     def get_transport_data(self) -> TransportData:
         """Adapt explicit one-group constants; never reduce/interpolate a table."""
         if self.energy_representation != "one_group":
-            raise ValueError("pointwise datasets are storage-only; energy-dependent transport is not implemented")
+            raise ValueError("non-one-group datasets are storage-only; no reference/pointwise transport mapping is implemented")
         self._require_compatible_kind(allow_legacy=True)
         available = {q.name: q.values for q in self.quantities if q.status == "available"}
         required = ("sigma_f", "sigma_a", "sigma_s", "nu", "mean_free_path")
@@ -464,9 +541,11 @@ class MaterialDataset:
         if self.data_kind not in allowed:
             raise ValueError("scientific datasets are storage-only; abstract scenarios require synthetic or educational data; "
                              "no reviewed scientific-to-transport mapping exists")
-        forbidden = ("experimental", "evaluated", "legacy") if self.data_kind != "legacy" else ("experimental", "evaluated")
-        if self.origin.source_library is not None or any(
-            q.data_kind in forbidden or (q.origin is not None and q.origin.source_library is not None)
+        forbidden = ("experimental", "evaluated", "reference", "legacy") if self.data_kind != "legacy" else ("experimental", "evaluated", "reference")
+        def scientific_origin(origin):
+            return origin is not None and (origin.source_library is not None or origin.source_url is not None)
+        if scientific_origin(self.origin) or scientific_origin(self.state.origin) or any(
+            q.data_kind in forbidden or scientific_origin(q.origin)
             for q in self.quantities
         ):
             raise ValueError("scientific/legacy source quantities are storage-only in a relabelled dataset; "
@@ -478,7 +557,11 @@ class MaterialDataset:
         Metadata documents a review; callers must still inspect that review for
         their application. This never enables transport or verifies a publication.
         """
-        if (self.data_kind not in ("experimental", "evaluated", "derived")
+        missing_average = self.energy_representation == "one_group" and any(
+            q.status == "available" and q.name in ("sigma_f", "sigma_a", "sigma_s")
+            and (q.averaging is None or q.averaging.independent_verification != "documented")
+            for q in self.quantities)
+        if (missing_average or self.data_kind not in ("experimental", "evaluated", "derived")
                 or self.quality.validation_status != "scientifically_validated"
                 or self.origin.original_reference is None
                 or any(q.data_kind in ("legacy", "synthetic", "educational") for q in self.quantities)):
@@ -516,6 +599,7 @@ class Material:
     """
     data_kind = "legacy"
     validation_status = "unverified"
+    verification_status = "legacy_unverified"
 
     def require_scientific_reference(self):
         message = f"{self.name}: legacy/unverified constants cannot be used as a validated scientific reference"
@@ -606,8 +690,10 @@ def get_builtin_dataset(material_key: str) -> MaterialDataset:
                 "derived from this legacy preset, not independently measured.") if name == "mean_free_path" else None))
             for name, value in values.items()),
         material_category="legacy_preset", state=MaterialState(density=material.density),
-        quality=DataQuality(known_limitations=("Unknown primary source, temperature, composition and energy weighting.",
-            "Preset names do not establish physical validity; not a scientific reference.")),
+        quality=DataQuality(verification_status="legacy_unverified", known_limitations=(
+            "Unknown primary source, temperature, composition and energy weighting.",
+            "Preset names do not establish physical validity; not a scientific reference.",
+            "Excluded from reference ML datasets; no reactor validation or calibration is implied.")),
     )
 
 
@@ -881,7 +967,26 @@ def load_synthetic_table(path, *, expected_sha256=None, checksum_reference=None,
          "energy_representation", "energy_unit"))
     if data["data_kind"] != "synthetic":
         raise ValueError("local table reader accepts explicitly synthetic data only")
+    dataset = material_from_dict(data)
+    dataset._require_compatible_kind()
+    return replace(dataset, local_file=replace(record, schema_version=SYNTHETIC_TABLE_SCHEMA),
+                   quality=replace(dataset.quality, validation_status="schema_validated"))
+
+
+def material_from_dict(data) -> MaterialDataset:
+    """Decode inert metadata; validate fields without granting scientific trust.
+
+    Local-file checks, when present, describe prior inspections, not new I/O.
+    The synthetic v1 reader remains restricted to synthetic records.
+    """
+    _object_fields(data, "dataset", (f.name for f in fields(MaterialDataset)),
+                   ("material_id", "name", "data_kind", "source", "version", "provenance", "quantities"))
     data = dict(data)
+    if data.get("local_file") is not None:
+        local = dict(data["local_file"])
+        if local.get("acquisition") is not None:
+            local["acquisition"] = _metadata(DataOrigin, local["acquisition"])
+        data["local_file"] = _metadata(LocalDataFile, local)
     for name, cls in (("origin", DataOrigin), ("quality", DataQuality), ("state", MaterialState)):
         if name in data:
             value = data[name]
@@ -900,6 +1005,8 @@ def load_synthetic_table(path, *, expected_sha256=None, checksum_reference=None,
             raw["values"] = _json_vector("quantity.values", raw["values"])
         if raw.get("origin") is not None:
             raw["origin"] = _metadata(DataOrigin, raw["origin"])
+        if raw.get("averaging") is not None:
+            raw["averaging"] = _metadata(AveragingConditions, raw["averaging"])
         if raw.get("uncertainty") is not None:
             u = raw["uncertainty"]
             _object_fields(u, "uncertainty", ("values", "kind", "reference"), ("values", "kind", "reference"))
@@ -909,10 +1016,7 @@ def load_synthetic_table(path, *, expected_sha256=None, checksum_reference=None,
             raw["uncertainty"] = ParameterUncertainty(**u)
         quantities.append(MaterialQuantity(**raw))
     data["quantities"] = tuple(quantities)
-    dataset = MaterialDataset(**data)
-    dataset._require_compatible_kind()
-    return replace(dataset, local_file=replace(record, schema_version=SYNTHETIC_TABLE_SCHEMA),
-                   quality=replace(dataset.quality, validation_status="schema_validated"))
+    return MaterialDataset(**data)
 
 
 def load_source_catalog(path=None) -> dict[str, DataLibrary]:
@@ -934,3 +1038,150 @@ def load_source_catalog(path=None) -> dict[str, DataLibrary]:
             ("library_id", "name", "organization", "version", "source_url", "data_kind", "formats", "checked_on"))
         register_library(result, DataLibrary(**raw))
     return result
+
+
+MATERIAL_SCHEMA = "heliosmc.material.v2"
+
+
+def get_reference_dataset(material_key: str) -> MaterialDataset:
+    """Source-checked ordinary-material facts, NEVER a transport preset.
+
+    Source checked means transcription and scope checked on 2026-11-06. It
+    does not mean independent experimental validation. No nuclear data occur.
+    Unknown graphite grade/state density remains missing. Historical presets
+    are deliberately untouched, including their rounded Avogadro constant.
+    """
+    if material_key not in ("Вода (H₂O)", "Графит"):
+        raise ValueError("reference records exist only for water and graphite")
+    water = material_key == "Вода (H₂O)"
+    cas = "C7732185&Mask=1" if water else "C7782425&Units=SI"
+    origin = DataOrigin(source_library="NIST Chemistry WebBook, SRD 69",
+        source_url=f"https://webbook.nist.gov/cgi/cbook.cgi?ID={cas}",
+        original_reference=f"NIST Chemistry WebBook: {'Water' if water else 'Graphite'}, formula and molecular weight",
+        retrieval_date="2026-11-06",
+        processing_description="Published molecular weight represented as conventional molar mass in g/mol; no isotope-specific mass inferred.")
+    scope = ("Chemical identity and conventional molar mass; isotopic fractions and impurities unspecified.",)
+    molar = MaterialQuantity("molar_mass", "g/mol", 18.0153 if water else 12.0107,
+        data_kind="reference", origin=origin, applicability_notes=scope)
+    if water:
+        density_origin = DataOrigin(source_library="IAPWS", library_version="SR6-08(2011)",
+            source_url="https://iapws.org/technical-guidance/release/LiquidWater.download",
+            original_reference="Revised Supplementary Release on Properties of Liquid Water at 0.1 MPa, Table 8, p. 11",
+            retrieval_date="2026-11-06",
+            processing_description="Published correlation check value 997.047013 kg/m^3 divided by 1000 to g/cm^3; no EOS implemented.")
+        density = MaterialQuantity("density", "g/cm^3", .997047013, data_kind="reference",
+            origin=density_origin, applicability_notes=("Ordinary liquid water at 298.15 K and 100000 Pa only.",
+                "Correlation check value, not a new measurement. Printed digits exceed physical uncertainty.",
+                "Section 2.3 quotes relative 0.0001 percent with coverage factor k=2; not stored as a one-sigma uncertainty."))
+        state = MaterialState(density.values, physical_state="liquid", origin=density_origin,
+                              temperature_range=(298.15, 298.15), pressure=100000.)
+    else:
+        density = MaterialQuantity("density", "g/cm^3", status="missing", data_kind="reference",
+            description="No grade, porosity, temperature or pressure identified for the historical graphite.",
+            applicability_notes=("NIST X-Ray Mass Attenuation Table 1 assumes 1.7 g/cm^3; this is not a measured density for an identified sample.",))
+        state = MaterialState(physical_state="solid")
+    return MaterialDataset(
+        material_id="heliosmc:reference-water" if water else "heliosmc:reference-graphite",
+        name="Water reference" if water else "Graphite reference", data_kind="reference",
+        source="NIST SRD 69; IAPWS SR6-08(2011)" if water else "NIST SRD 69",
+        version="1", provenance=("Official source pages inspected 2026-11-06; no nuclear evaluation files downloaded.",),
+        quantities=(molar, density), chemical_formula="H2O" if water else "C",
+        composition=(("H", 2.), ("O", 1.)) if water else (("C", 1.),),
+        composition_basis="stoichiometric", material_category="compound" if water else "component",
+        temperature=298.15 if water else None, energy_representation="not_applicable",
+        state=state, origin=origin, quality=DataQuality(validation_status="schema_validated",
+            verification_status="source_checked", applicability_notes=scope + density.applicability_notes,
+            known_limitations=("No measured sample composition, neutron interaction coefficients or independent material validation.",
+                "Source-parameter standard uncertainties are unknown unless explicitly supplied; None never means zero.",
+                "Reference values do not replace historical transport parameters.")))
+
+
+def _json_data(value):
+    """Explicit JSON types only; never serialize arbitrary Python objects."""
+    if isinstance(value, np.ndarray):
+        if value.dtype.kind not in "iuf" or not np.isfinite(value).all():
+            raise ValueError("only finite numeric arrays may be exported")
+        return value.tolist()
+    if isinstance(value, dict):
+        if any(not isinstance(k, str) for k in value):
+            raise TypeError("JSON keys must be strings")
+        return {k: _json_data(v) for k, v in value.items()}
+    if isinstance(value, (tuple, list)):
+        return [_json_data(v) for v in value]
+    if value is None or type(value) in (str, bool, int):
+        return value
+    if type(value) is float and math.isfinite(value):
+        return value
+    raise ValueError("unsupported or nonfinite JSON value")
+
+
+def material_to_dict(dataset: MaterialDataset) -> dict:
+    """Lossless JSON-compatible schema representation, including explicit nulls."""
+    if not isinstance(dataset, MaterialDataset):
+        raise TypeError("dataset must be MaterialDataset")
+    return _json_data(asdict(dataset))
+
+
+def _canonical_bytes(value):
+    return json.dumps(_json_data(value), ensure_ascii=False, sort_keys=True,
+                      separators=(",", ":"), allow_nan=False).encode("utf-8")
+
+
+def _content_hash(value):
+    return hashlib.sha256(_canonical_bytes(value)).hexdigest()
+
+
+def _write_archive(path, schema, payload):
+    """Exclusive creation; embedded hash detects corruption, not authorship."""
+    document = dict(schema_version=schema, exported_at=datetime.now(timezone.utc).isoformat(), payload=payload)
+    document["content_sha256"] = _content_hash(document)
+    raw = _canonical_bytes(document)
+    if len(raw) > _MAX_JSON_BYTES:
+        raise ValueError("archive exceeds JSON size limit")
+    with Path(path).open("xb") as stream:
+        stream.write(raw)
+    return hashlib.sha256(raw).hexdigest()
+
+
+def _load_archive(path, schema, *, expected_sha256=None):
+    document, _ = _read_local_json(path, expected_sha256=expected_sha256,
+        checksum_reference="caller-pinned export SHA-256" if expected_sha256 is not None else None)
+    names = ("schema_version", "exported_at", "payload", "content_sha256")
+    _object_fields(document, "archive", names, names)
+    if document["schema_version"] != schema:
+        raise ValueError("unsupported archive schema_version")
+    _text("exported_at", document["exported_at"])
+    stamp = datetime.fromisoformat(document["exported_at"])
+    if stamp.utcoffset() is None:
+        raise ValueError("exported_at requires a timezone")
+    _sha256(document["content_sha256"])
+    body = {k: v for k, v in document.items() if k != "content_sha256"}
+    if _content_hash(body) != document["content_sha256"]:
+        raise ValueError("archive content checksum mismatch")
+    return document["payload"]
+
+
+def _check_reference_identity(dataset):
+    # Reserve these IDs against altered values, sources, statuses and conditions,
+    # even if an editor recomputes the self-checksum. Other records remain declarations.
+    for key in ("Вода (H₂O)", "Графит"):
+        reference = get_reference_dataset(key)
+        if dataset.material_id == reference.material_id:
+            if material_to_dict(dataset) != material_to_dict(reference):
+                raise ValueError("built-in reference identity/content mismatch")
+
+
+def export_material_reference(dataset, path) -> str:
+    """Archive any material classification without upgrading its trust status.
+
+    Returns exact file SHA-256 for independent retention. No network access.
+    """
+    data = material_to_dict(dataset)
+    _check_reference_identity(dataset)
+    return _write_archive(path, MATERIAL_SCHEMA, data)
+
+
+def load_material_reference(path, *, expected_sha256=None) -> MaterialDataset:
+    dataset = material_from_dict(_load_archive(path, MATERIAL_SCHEMA, expected_sha256=expected_sha256))
+    _check_reference_identity(dataset)
+    return dataset

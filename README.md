@@ -100,6 +100,58 @@ available separately and rejects extrapolation; no transport reads those tables.
 See the [mathematical audit](docs/ARCHITECTURE_AUDIT.md#educational-mathematics-upgrade-2026-10-31)
 for derivations, numerical limits, reproducibility, performance and test evidence.
 
+## Reference data and research export (2026-11-06)
+
+`get_reference_dataset("Вода (H₂O)")` and `get_reference_dataset("Графит")`
+return separate records in the existing material schema. NIST supplies chemical
+identity and conventional molar mass. The water density is the IAPWS published
+correlation check value at **298.15 K, 100000 Pa**. Graphite density remains
+missing because grade/porosity/state are unknown. `source_checked` means the
+quoted property and its scope were checked; it does not mean the transport
+model or a real specimen was scientifically validated. All four historical
+`MATERIALS` presets retain every number and are `legacy_unverified`.
+
+The v2 schema adds pressure metadata, a separate source verification status,
+`not_applicable` for energy-independent reference properties, and an optional
+`AveragingConditions` contract. Unknown averaging cannot establish a validated
+one-group nuclear parameter. No scientific reference record enters either kernel.
+
+```python
+from material import get_reference_dataset, export_material_reference, load_material_reference
+from physics import (create_slab_configuration, run_slab_experiment,
+                     export_slab_experiment, load_slab_experiment)
+
+# Use the synthetic `medium` from the example above. Choose criteria BEFORE running.
+config = create_slab_configuration("absorption-demo", [medium], [0., 2.],
+    n_histories=4000, seed=123, verification="pure_absorption_v1")
+experiment = run_slab_experiment(config)
+digest = export_slab_experiment(experiment, "my-new-experiment")
+restored = load_slab_experiment("my-new-experiment", expected_sha256=digest)
+replay = run_slab_experiment(restored["configuration"])
+assert replay["result"]["outcome_counts"] == restored["result"]["outcome_counts"]
+
+water = get_reference_dataset("Вода (H₂O)")
+water_digest = export_material_reference(water, "my-new-water.json")
+assert load_material_reference("my-new-water.json", expected_sha256=water_digest).state.pressure == 100000.
+```
+
+The destination must be new. Each experiment has `experiment.json`, `results.csv`
+and `arrays.npz`. Load checks versions, hashes, numeric shapes/dtypes, counts,
+uncertainty, verification and feature/target separation. NPZ loads disable pickle;
+no trajectory arrays are exported. Retain returned hashes independently: a
+self-contained checksum detects corruption, not an author who replaces all files.
+Replay requires matching code hashes and recorded dependency versions.
+
+`split_slab_groups(experiments)` keeps repeats of the same mathematical problem
+in one partition, including runs with different seeds/populations. Only complete,
+analytically checked synthetic/educational experiments qualify; a small collection
+may give an empty partition. No ML model is trained. The [research audit](docs/ARCHITECTURE_AUDIT.md#scientific-material-data-and-research-export-2026-11-06)
+contains field/source tables, criteria, export contracts and current test evidence.
+The audit records one executed small example, its observed uncertainty, and
+the reproducible export/reload contract. Its 95% interval missed the analytic
+value in that run; the fixed alpha=1e-6 regression criterion passed. No seed
+selection or after-the-fact tolerance adjustment was used.
+
 ## Tests
 
 Run the automated tests from the project root:

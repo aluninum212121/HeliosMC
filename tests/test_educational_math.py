@@ -25,6 +25,169 @@ def medium(a=0., s=0.):
          MaterialQuantity('scattering_rate', '1/cm', s)))
 
 
+def test_research_export_roundtrip_replay_and_feature_separation(tmp_path):
+    config = physics.create_slab_configuration("roundtrip", [medium(.5)], [0., 2.], 4000,
+        seed=123, verification="pure_absorption_v1", max_samples=2)
+    experiment = physics.run_slab_experiment(config)
+    destination = tmp_path / "experiment"
+    digest = physics.export_slab_experiment(experiment, destination)
+    loaded = physics.load_slab_experiment(destination, expected_sha256=digest)
+    assert loaded == experiment
+    replay = physics.run_slab_experiment(loaded["configuration"])
+    assert replay["result"]["outcome_counts"] == loaded["result"]["outcome_counts"]
+    assert replay["result"]["estimates"] == loaded["result"]["estimates"]
+    assert loaded["verification"]["status"] == "passed"
+    assert loaded["verification"]["analytic_result"] == pytest.approx(np.exp(-1.))
+    assert loaded["verification"]["alpha"] == config["verification_protocol"]["alpha"] == 1e-6
+    assert set(loaded["ml_record"]["features"]) == {"rates_per_cm", "edges_cm", "source_x_cm", "source_mu", "n_histories", "max_collisions"}
+    assert loaded["ml_record"]["metadata"]["eligible_for_training"]
+    assert "sampled_paths_cm" not in loaded["result"]
+    with np.load(destination / "arrays.npz", allow_pickle=False) as arrays:
+        assert set(arrays.files) == {"rates_per_cm", "edges_cm", "outcome_counts"}
+    with pytest.raises(FileExistsError):
+        physics.export_slab_experiment(experiment, destination)
+
+
+def test_research_python_numba_and_seed_none_replay():
+    config = physics.create_slab_configuration("unseeded", [medium(.3, .5)], [0., 1.], 500,
+        backend="python", seed=None)
+    assert config["requested_seed"] is None and isinstance(config["parameters"]["seed"], int)
+    one = physics.run_slab_experiment(config)
+    two = physics.run_slab_experiment(config)
+    assert one["result"]["outcome_counts"] == two["result"]["outcome_counts"]
+    assert one["verification"] is None
+    if physics.HAS_NUMBA:
+        compiled = physics.create_slab_configuration("compiled", [medium(.3, .5)], [0., 1.], 500,
+            backend="numba", seed=config["parameters"]["seed"])
+        assert physics.run_slab_experiment(compiled)["result"]["outcome_counts"] == one["result"]["outcome_counts"]
+
+
+@pytest.mark.parametrize("a,n,limit,warning", [(2., 500, 0, "collision_limit_reached"), (0., 0, 1, "no_histories")])
+def test_export_censored_empty_runs_never_become_training_targets(tmp_path, a, n, limit, warning):
+    config = physics.create_slab_configuration("limits", [medium(a)], [0., 1.], n,
+        seed=14, max_collisions=limit, verification="pure_absorption_v1")
+    experiment = physics.run_slab_experiment(config)
+    assert experiment["verification"]["status"] == "inconclusive"
+    assert experiment["verification"]["absolute_error"] is None
+    assert warning in experiment["result"]["warnings"]
+    assert all(v is None for v in experiment["ml_record"]["targets"].values())
+    with pytest.raises(ValueError, match="training requires"):
+        physics.split_slab_groups([experiment])
+    digest = physics.export_slab_experiment(experiment, tmp_path / "run")
+    assert physics.load_slab_experiment(tmp_path / "run", expected_sha256=digest) == experiment
+
+
+def test_export_numeric_limits_and_backward_boundary_verification(tmp_path):
+    config = physics.create_slab_configuration("numeric", [medium(1e308)], [0., 2.], 5,
+        source_x=1., seed=2, verification="pure_absorption_v1")
+    experiment = physics.run_slab_experiment(config)
+    assert experiment["result"]["warnings"] == ["numerical_resolution_limit"]
+    assert experiment["verification"]["status"] == "inconclusive"
+    physics.export_slab_experiment(experiment, tmp_path / "numeric")
+    assert physics.load_slab_experiment(tmp_path / "numeric") == experiment
+    for x in (0., .5, 1.):
+        c = physics.create_slab_configuration("left", [medium(.2), medium(.4)], [0., 1., 2.], 2000,
+            source_x=x, source_mu=-.5, seed=7, verification="pure_absorption_v1")
+        r = physics.run_slab_experiment(c)
+        assert r["verification"]["analytic_result"] == pytest.approx(np.exp(-.2*x/.5))
+        assert r["verification"]["status"] == "passed"
+
+
+def test_research_groups_include_repeats_despite_seed_population_and_labels():
+    experiments = []
+    for seed, n, label in ((11, 300, "a"), (22, 500, "b"), (33, 400, "c")):
+        config = physics.create_slab_configuration(label, [replace(medium(.5), material_id=label)], [0., 1.], n,
+            seed=seed, verification="pure_absorption_v1")
+        experiments.append(physics.run_slab_experiment(config))
+    assert len({r["configuration"]["configuration_id"] for r in experiments}) == 3
+    assert len({r["configuration"]["group_id"] for r in experiments}) == 1
+    train, test = physics.split_slab_groups(experiments)
+    assert len(train) + len(test) == 3 and (not train or not test)
+    assert not ({r["configuration"]["group_id"] for r in train} & {r["configuration"]["group_id"] for r in test})
+
+
+@pytest.mark.parametrize("member", ["experiment.json", "results.csv", "arrays.npz"])
+def test_corrupt_export_members_are_rejected(tmp_path, member):
+    c = physics.create_slab_configuration("corrupt", [medium()], [0., 1.], 10, seed=1)
+    r = physics.run_slab_experiment(c)
+    physics.export_slab_experiment(r, tmp_path / "run")
+    path = tmp_path / "run" / member
+    path.write_bytes(path.read_bytes() + b"corruption")
+    with pytest.raises(ValueError):
+        physics.load_slab_experiment(tmp_path / "run")
+
+
+@pytest.mark.parametrize("change", ["count", "ci", "warning", "features", "verification", "source", "version", "group"])
+def test_export_semantic_tampering_is_rejected(tmp_path, change):
+    import copy
+    from material import _content_hash
+    c = physics.create_slab_configuration("tampering", [medium(.5)], [0., 1.], 100, seed=1,
+        verification="pure_absorption_v1")
+    r = copy.deepcopy(physics.run_slab_experiment(c))
+    if change == "count": r["result"]["outcome_counts"]["absorbed"] += 1
+    if change == "ci": r["result"]["estimates"]["absorbed"]["confidence_interval"][0] = 0.
+    if change == "warning": r["result"]["warnings"] = ["fake"]
+    if change == "features": r["ml_record"]["features"]["target"] = .5
+    if change == "verification": r["verification"]["analytic_result"] = .5
+    if change == "source": r["configuration"]["layers"][0]["data_kind"] = "reference"
+    if change == "version": r["configuration"]["algorithm_version"] = "unknown"
+    if change == "group": r["configuration"]["group_id"] = "0"*64
+    config = r["configuration"]
+    config["configuration_id"] = _content_hash({k:v for k,v in config.items() if k != "configuration_id"})
+    with pytest.raises(ValueError):
+        physics.export_slab_experiment(r, tmp_path / "bad")
+    assert not (tmp_path / "bad").exists()
+
+
+def test_npz_object_and_false_csv_are_rejected_even_with_new_checksums(tmp_path):
+    import hashlib
+    import json
+    from material import _content_hash
+    c = physics.create_slab_configuration("object", [medium()], [0., 1.], 10, seed=1)
+    r = physics.run_slab_experiment(c)
+    for name in ("arrays.npz", "results.csv"):
+        directory = tmp_path / name.replace(".", "-")
+        physics.export_slab_experiment(r, directory)
+        if name.endswith("npz"):
+            np.savez(directory / name, edges_cm=np.array([object()], dtype=object), rates_per_cm=np.array([[0., 0.]]), outcome_counts=np.array([0,0,10,0,0]))
+        else:
+            (directory / name).write_bytes(b"false results\n")
+        path = directory / "experiment.json"
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        raw["payload"]["sidecar_sha256"][name] = hashlib.sha256((directory / name).read_bytes()).hexdigest()
+        raw["content_sha256"] = _content_hash({k:v for k,v in raw.items() if k != "content_sha256"})
+        path.write_text(json.dumps(raw), encoding="utf-8")
+        with pytest.raises(ValueError, match="shape/dtype|CSV"):
+            physics.load_slab_experiment(directory)
+
+
+def test_predeclared_slab_ensemble_convergence_and_coefficient_effect():
+    # Criteria fixed before execution: independent replicate RMSE scaling within
+    # 35% of sqrt(2048/128)=4; binomial checks alpha=1e-6. No monotonic demand
+    # on one noisy run and no fitted tolerance from observed outcomes.
+    p = np.exp(-.7)
+    errors = []
+    for n in (128, 2048):
+        values = [physics.simulate_slab([medium(.7)], [0., 1.], n, seed=1000+j,
+                   max_collisions=1)["estimates"]["escaped_right"]["estimate"] for j in range(48)]
+        errors.append(np.sqrt(np.mean((np.asarray(values)-p)**2)))
+    assert errors[0]/errors[1] == pytest.approx(4., rel=.35)
+    for rate in (0., .2, 1.):
+        r = physics.simulate_slab([medium(rate)], [0., 1.], 4000, seed=77, max_collisions=1)
+        assert stats.binomtest(r["outcome_counts"]["escaped_right"], 4000, np.exp(-rate)).pvalue > 1e-6
+
+
+def test_research_rejects_legacy_scientific_and_nonanalytic_configurations():
+    from material import get_builtin_dataset, get_reference_dataset, MATERIALS
+    for dataset in [get_builtin_dataset(k) for k in MATERIALS] + [get_reference_dataset("Вода (H₂O)")]:
+        with pytest.raises(ValueError):
+            physics.create_slab_configuration("forbidden", [dataset], [0., 1.])
+    with pytest.raises(ValueError, match="zero scattering"):
+        physics.create_slab_configuration("wrong oracle", [medium(s=1.)], [0., 1.], verification="pure_absorption_v1")
+    with pytest.raises(ValueError, match="unsupported"):
+        physics.create_slab_configuration("wrong option", [medium()], [0., 1.], target=3.)
+
+
 @pytest.mark.parametrize('rates,widths', [([.8], [2.]), ([.2, 0., 1.1], [.5, 1., .75])])
 def test_absorption_matches_analytic_attenuation_and_quadrature(rates, widths):
     edges = np.r_[0., np.cumsum(widths)]

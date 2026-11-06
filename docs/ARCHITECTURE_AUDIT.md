@@ -1216,3 +1216,340 @@ created; README records the dependency and tested versions. No new production
 module or deleted file, and no commit/push. Added artifacts are one independent
 mathematical test module and two benchmark JSON outputs. Task-owned temporary
 snapshots/harnesses/test artifacts were removed after verification.
+
+## Scientific material data and research export (2026-11-06)
+
+This addendum is the current contract; earlier dated entries describe previous
+stages (including the earlier documentation-only archive proposal). Initial Git
+status was clean. AGENTS.md, all of material.py, its stdlib/NumPy dependencies,
+physics.py including simulate_slab, worker/GUI use sites, tests, benchmark imports,
+README, source catalog and prior architecture reports were inspected before edits.
+No new production module, dependency, nuclear parser, ML training, commit or push.
+
+### Source audit
+
+All checks below were made on **2026-11-06**. A page check is not numerical-file
+verification, license clearance, independent reproduction or scientific validation.
+No nuclear evaluation archive was downloaded, opened, processed or checksummed.
+Only the small IAPWS document was opened as a PDF through the web research tool.
+Its page title metadata is stale; the document cover identifies SR6-08(2011).
+
+| Source / organization | Version / document actually opened | Data and applicability | Check status and limitations |
+| --- | --- | --- | --- |
+| [ENDF index](https://www.nndc.bnl.gov/endf/index.html), CSEWG / BNL NNDC | VIII.1, released 2024-08-30; Evaluated Nuclear Data File index | Evaluations, distinct release/evaluation/processing identity | Index opened. [Requested landing page](https://www.nndc.bnl.gov/endf-library/) failed direct fetch; search index listed VIII.1, VIII.0, VII.1. [Release interface](https://www.nndc.bnl.gov/endf-releases/) exposed headings only. Latest file corrections not verified. |
+| [ENDF Reports](https://www.nndc.bnl.gov/endfdocs/), BNL NNDC | Report-number catalog, historical entries with dates and cross-references | Publication identifiers and documentation organization | HTML opened. [ENDF-102-2023 manual](https://www.nndc.bnl.gov/endfdocs/ENDF-102-2023.pdf) timed out: **not read** this session. Naming/about URLs also unavailable. No claim to a new ENDF format implementation. |
+| [JEFF-4.0](https://databank.io.oecd-nea.org/data/jeff/40/), OECD NEA Data Bank | Official June 2025 release; Joint Evaluated Fission and Fusion Library version 4.0 | ENDF6 evaluations and separately processed ACE, PENDF0K, HDF5, GENDF, AMPX; temperature grids differ | Release/citation tables opened; test-release history link observed, its files not read. Cite JEFF Project (2025), DOI **10.82555/e9ajn-a3p20**, and relevant evaluation/processing. No file/reuse-license verification. |
+| [JENDL-5 overview](https://wwwndc.jaea.go.jp/jendl/j5/j5.html) and [errata](https://wwwndc.jaea.go.jp/jendl/j5/JENDL-5_Errata.html), JAEA | December 2021 release; corrections through neutron update-17 and proton update-18 dated 2026-03-21 observed | Evaluated ENDF-6; separate 0 K/300 K pointwise distributions and thermal-scattering sublibrary | Homepage, overview, errata opened. Pin sublibrary and correction revision. Requested citation: Iwamoto et al., JNST 60 (2023), DOI **10.1080/00223131.2022.2141903**; article itself not opened. |
+| [OpenMC data](https://openmc.org/data/), OpenMC team | ENDF/B-VIII.1 processed with NJOY2016.78; live download page | ENDF → ACE → HDF5 processing; neutron grids at 250, 293.6, 600, 900, 1200, 2500 K; thermal scattering uses its own tabulated temperatures | Page opened, archives not opened. Its JENDL-5 description says through update-16; do not equate it with the later JAEA revision. Parent evaluation and processing both required. |
+| [Data Configuration](https://docs.openmc.org/en/latest/usersguide/data.html) and [Nuclear Data File Formats](https://docs.openmc.org/en/latest/io_formats/nuclear_data.html), OpenMC | Live `latest` documentation; no pinned software release | CE: XML index of HDF5 nuclide files. Multigroup: separate HDF5 contract. Hierarchical groups carry nuclide identity, reactions, eV grids, kT in eV and Kelvin temperature labels | Pages opened. HDF5 is storage, not a provenance/accuracy guarantee. No HDF5 dependency added. |
+| [Material Compositions](https://docs.openmc.org/en/latest/usersguide/materials.html) and [Execution Settings](https://docs.openmc.org/en/latest/usersguide/settings.html), OpenMC | Live `latest` documentation | Composition/density/state, material/cell temperature, source position/direction/energy distributions are separate inputs | Pages opened; examples are not measured constants. Water/graphite can require bound-atom thermal-scattering data. None of this physics is imported into HeliosMC. |
+| [NRDC](https://www-nds.iaea.org/nrdc/) and [EXFOR API](https://nds.iaea.org/exfor/x4guide/API/), IAEA / NRDC | API v.2023-10-19; continuously revised EXFOR | Experimental measurements plus bibliographic/experimental context; original and interpreted output differ. Evaluations combine assessment/modeling and are a different data product | Both pages opened. [EXFOR front page](https://www-nds.iaea.org/exfor/) returned no readable text. No numerical API response tested. Cite original paper, entry/subentry/pointer and revision, preserve errors/conditions. |
+| [Water](https://webbook.nist.gov/cgi/cbook.cgi?ID=C7732185&Mask=1), NIST Chemistry WebBook SRD 69 | Water species page, CAS 7732-18-5; revision not supplied | Formula H2O; published molecular weight 18.0153, represented as conventional molar mass in g/mol | Page opened; copied identity/value checked. No isotope-specific mass, temperature law, density or standard uncertainty inferred from this page. |
+| [Graphite](https://webbook.nist.gov/cgi/cbook.cgi?ID=C7782425&Units=SI), NIST SRD 69 | Graphite species page, CAS 7782-42-5; revision not supplied | Formula C; molecular weight 12.0107, conventional molar mass in g/mol | Page opened; species identity does not establish grade, porosity, impurities, density or isotope fractions. |
+| [X-Ray Mass Attenuation Table 1](https://physics.nist.gov/PhysRefData/XrayMassCoef/tab1.html), NIST | Material constants assumed in the evaluations; page revision not established | Graphite density 1.700 g/cm³ is an adopted model value | Opened; no matching specimen conditions. **Not adopted as a validated sample density**, even though it numerically matches the legacy preset. |
+| [SR6-08(2011) release](https://iapws.org/technical-guidance/release/LiquidWater) and [PDF](https://iapws.org/technical-guidance/release/LiquidWater.download), IAPWS | Revised Supplementary Release on Properties of Liquid Water at 0.1 MPa, September 2011, §2.3 and Table 8 p.11 | Published correlation check density **997.047013 kg/m³ at 298.15 K, 0.1 MPa**. This record uses only that state, not the whole correlation range | PDF text/table opened; conversion to 0.997047013 g/cm³ checked separately. Printed digits exceed uncertainty. §2.3 quotes 0.0001% relative with k=2; not silently converted to one-sigma. Full equation of state not implemented or independently validated. |
+| [SciPy constants](https://docs.scipy.org/doc/scipy/reference/constants.html), SciPy | Online 1.18.0 manual / CODATA 2022 | Standard constants include N_A in mol⁻¹ | Page opened. No new number-density/transport conversion is needed. Changing legacy 6.022e23 to scipy.constants.N_A would change results, so it is explicitly deferred. Future independently reviewed derivations should use SciPy constants. |
+
+The nuclear source catalog remains its compatible five-entry v1 registry; its
+dates, exact inspected documents, revision differences and failed-access notes
+were updated. Property-specific provenance is attached to each reference
+quantity, rather than implying that the nuclear library supplies chemical data.
+Reference file_checksum stays None: no raw source-file checksum was independently
+obtained. Local export checksums describe our serialization only.
+
+### Material audit and parameter classification
+
+Categories: A = directly published property; B = derived; C = scoped average;
+D = invented mathematical coefficient; E = historical unknown provenance.
+Existing interaction constants cannot be relabelled D merely because a simulator
+uses them for education. Their original energy weighting remains unknown.
+
+| Preset | Historical values retained (barn; nu dimensionless; g/cm³; g/mol) | Separate reference record / changes | Unverified or deliberately unchanged |
+| --- | --- | --- | --- |
+| U-235 pure | sigma_f=1.65, sigma_a=2.71, sigma_s=8.9, nu=2.43, density=19.1, M=235 | E, verification_status=legacy_unverified; explicit ML exclusion/limitations | All numbers, formulas and reactor behavior. No new reference or transport mapping. |
+| U-235 (3.5%) | .06, .45, 9.5, 2.43, 10.5, 238 | E, legacy_unverified; name is not a verified isotope composition | Same exclusions; no enrichment/fission/multiplication update. |
+| Water | 0, .66, 49, 0, 1.0, 18 | A: NIST H2O and 18.0153 g/mol. A with exact unit conversion: IAPWS density .997047013 g/cm³ at 298.15 K/100000 Pa. New ID heliosmc:reference-water, revision 1 | Old density/mass feed mean_free_path and cannot be replaced without changing transport and assuming unknown old conditions. All legacy values remain E. |
+| Graphite | 0, .004, 4.7, 0, 1.7, 12 | A: NIST C and 12.0107 g/mol. New ID heliosmc:reference-graphite, revision 1; density explicitly missing | Grade/porosity/state density unavailable. Nominal NIST 1.7 does not prove legacy provenance. No transport calibration. |
+
+`source_checked` means a scoped transcription check, separate from
+`validation_status=scientifically_validated`. Neither new record is labelled
+scientifically validated and neither passes require_scientific_reference().
+The existing scientific-review declaration API is retained; declarations alone
+do not authenticate a publication. Public reference IDs are reserved on export
+and load: altered content with those IDs is rejected even after recomputing the
+embedded checksum. Custom records remain caller declarations.
+
+Field audit (grouped only where unit/type/source/use/status are the same):
+
+| Field(s) / owner | Unit; type | Source / current use | Reliability / change |
+| --- | --- | --- | --- |
+| Material.name, TransportData.name | none; str | Preset label / GUI and run metadata | E; preserve, not a composition claim |
+| Material.sigma_f, sigma_a, sigma_s; same TransportData fields | barn; real/float | Project constants / channel sampling, total | E; sigma_a excludes fission; unchanged |
+| Material.nu; TransportData.nu | 1; real/float | Project constant / legacy secondary production | E; unchanged |
+| Material.density | g/cm³; real | Project constant / number density | E; unchanged, separate A references |
+| Material.molar_mass | g/mol; real | Project constant / number density | E; unchanged |
+| Material.color | none; str | UI palette | Display only; unchanged |
+| sigma_total() | barn; float | B: sigma_f+sigma_a+sigma_s | Arithmetic, not independently measured; unchanged |
+| macro_total() | 1/cm; float | B: (6.022e23*density/M)*sigma_total*1e-24 | Assumes matching per-particle/formula-unit normalization; unknown for presets; unchanged |
+| mean_free_path(); TransportData.mean_free_path | cm; float | B: 1/macro_total; explicit provider input | Legacy derivation or caller declaration; unchanged |
+| TransportData.data_source | none; str | Caller/provider label | Not provenance proof; unchanged |
+| Material.data_kind, validation_status, verification_status | enum strings | Legacy classification | legacy / unverified retained; legacy_unverified added |
+| Dataset.material_id, name | none; str | Caller or reference factory / identity | Immutable, required; reserved reference IDs checked |
+| Dataset.chemical_formula | none; str or None | A NIST or caller / reference only | H2O/C confirmed; no chemistry parser |
+| Dataset.material_category | enum str | Declared identity | component, compound, mixture, abstract, legacy_preset, unspecified; compound added for water |
+| Dataset.composition | basis-dependent; tuple[(str,float)] or None | Published formula or caller / metadata | Finite unique entries; no isotope inference |
+| Dataset.composition_basis | enum str | Caller / normalization contract | Fractions sum to 1 ±1e-8 without adjustment; stoichiometric amounts now strictly positive |
+| Dataset.temperature, temperature_unit | K; float or None, str | Source state / metadata | Nonnegative finite, checked against applicability range; unknown remains None |
+| Dataset.energy_representation | enum str | Provider / storage and adapter guard | one_group, pointwise; not_applicable added for noninteraction properties |
+| Dataset.energy_grid, energy_unit | eV; readonly float64 vector or None, str | Explicit table / interpolation storage | Strictly increasing; no automatic group collapse |
+| Dataset.quantities | tuple[MaterialQuantity] | Source/caller | Unique names; arrays immutable; no Numba objects |
+| Dataset.source, version, provenance | strings / optional str / tuple[str] | Provider / description of local revision | Not identical to external library_version; no guessed revision |
+| Dataset.state, origin, quality, local_file | typed records; local_file optional | Source declarations/prior inspection | See rows below; no implicit acquisition on load |
+| Quantity.name, unit | strings, unit optional only if unavailable | Field contract | Known units matched to names; no implicit conversion |
+| Quantity.values, status | scalar/vector/None; enum | A/B/C/D/E, specified per quantity | Finite nonnegative, molar_mass strictly positive; missing/unsupported must be None |
+| Quantity.description, data_kind, applicability_notes | string / optional enum / tuple[str] | Source/caller / scope | Scientific/legacy quantities blocked in relabelled synthetic media |
+| Quantity.origin, uncertainty, averaging | typed optional records | Explicit source/error/averaging information | No fabricated uncertainty or averaging |
+| State.density, density_unit | g/cm³; float or None, str | Source / metadata only | Must agree with duplicate density quantity and provenance |
+| State.physical_state, origin | enum / optional DataOrigin | Source or explicit abstract declaration | Unknown allowed; reference water liquid, graphite solid |
+| State.density_range, temperature_range | g/cm³ / K; ordered pair or None | Applicability bounds | Not confidence intervals; no extrapolation law |
+| State.pressure, pressure_unit | Pa; float or None, str | Source state | Added; explicit finite nonnegative value, no guessed pressure |
+| Origin.source_library, library_version, source_url, original_reference | optional strings | Source identification | HTTPS URL check is structural; source URL/date/reference required for source_checked |
+| Origin.processing_description, processing_software, processing_version | optional strings | B / explicit processing lineage | Derived values require method description; version requires software name |
+| Origin.file_checksum, retrieval_date | SHA-256 / YYYY-MM-DD or None | Actual acquisition evidence | No source checksum invented; export digest is separate |
+| Quality.validation_status, validation_reference | enum / optional str | Declared assessment and scope | Schema validity distinct from scientific review |
+| Quality.verification_status | enum str | This audit or caller | Added: unverified / source_checked / legacy_unverified |
+| Quality.applicability_notes, known_limitations | tuple[str] | Source and model scope | Required for source_checked; not erased on reload |
+| Uncertainty.values, kind, reference | parent units or fraction; scalar/vector, enum, str | Source-parameter standard uncertainty | Shape matches parent; unknown None, never MC error or k=2 treated as k=1 |
+| Averaging.method, weighting, reference, assumptions | str, str, str, tuple[str] | C: explicit published method/spectrum/normalization | Added storage contract; no computation or transport activation |
+| Averaging.energy_bounds_ev | eV; ordered finite pair | C applicability | Mandatory; range alone does not specify spectrum |
+| Averaging.independent_verification, verification_reference | enum / optional str | Separate review declaration | documented requires its own reference; unknown averaging cannot pass nuclear-average reference guard |
+| LocalDataFile.path, size_bytes, sha256 | str / bytes int / hex str | Local byte observation | Existing; hash alone does not verify source |
+| LocalDataFile.expected_sha256, checksum_reference | optional strings | Independently retained comparison | Pair required; mismatch rejected |
+| LocalDataFile.schema_version, acquisition | optional schema / DataOrigin | Prior parsing/acquisition | Existing v1 checks preserved; reload does not re-download |
+| DataLibrary.library_id, name, organization, version, source_url | strings | Official catalog metadata | Existing identities preserved; versions/access limitations revised |
+| DataLibrary.data_kind, formats, checked_on, documentation_urls | enum / tuple / date / tuple | Source audit | Evaluated vs experimental vs processed distinguished |
+| DataLibrary.license, usage_notes, availability_status, local_files | optional str / str / enum / tuple | Source/file inspection declarations | Unknown license remains unknown; no file checks invented |
+| Slab absorption_rate, scattering_rate | 1/cm; explicit scalars | D: chosen mathematical rates | Finite nonnegative, zero is vacuum; no density/cross-section conversion |
+| Slab edges_cm, source_x, source_mu | cm / cm / 1; arrays/scalars | Mathematical geometry/source | Known before run; features, not material properties |
+| n_histories, seed, max_collisions, max_samples, batch_size, backend, max_memory_bytes | counts/seed/bytes/enums | Algorithm controls | Separated from materials. Limits/sample/backend are not physics constants |
+| confidence, verification alpha | probability; float | Statistical protocol | Fixed before run; not a source-parameter uncertainty |
+
+There is no general validated one-group constant for water, graphite or uranium.
+The mathematical form of an average would be integral(q(E)*w(E)dE)/integral(w(E)dE),
+with a nonzero denominator and specified domain, weighting, normalization, state,
+composition, source and processing. AveragingConditions records these declarations;
+it does **not** perform this reduction. Temperature/composition belong to the
+enclosing dataset and limitations belong to its quality/applicability metadata.
+No averaged nuclear value was created. A nuclear one-group dataset without
+explicit temperature/composition and documented independent averaging review
+cannot be labelled scientifically_validated; its reference guard also rejects it.
+
+### Implementation and export contracts
+
+Changes are confined to existing material.py, physics.py, two existing test files,
+README, this audit and docs/data_sources.json. Public signatures remain compatible;
+dataclass additions have defaults at the end. Added APIs are additive, as requested.
+The synthetic v1 reader uses the shared material_from_dict decoder while retaining
+its original envelope, explicit synthetic restriction and immutable-array checks.
+material_to_dict/material_from_dict preserve explicit nulls and optional metadata.
+
+Material exports use `heliosmc.material.v2`. export_material_reference accepts any
+classification without changing it; load_material_reference validates the schema
+and reserved reference IDs. No import initiates networking. Dataset and transport
+remain separate; only synthetic/educational scalar rates enter slab, only the old
+explicit scalar contract enters legacy transport. No hidden normalization,
+interpolation, energy reduction, density adjustment or new coefficients occur.
+
+create_slab_configuration freezes inputs before simulation, resolves seed=None to
+recorded PCG64 entropy and stores a predeclared verification protocol. It uses a
+zero-history call to the unchanged simulator for input checks. Actual sample
+storage/resource checks still run before the real simulation. Configuration IDs
+hash the complete configuration; timing/results/export time are excluded.
+Code SHA-256 covers physics.py, material.py and numba_compat.py; environment pins
+Python/NumPy/SciPy/Numba versions and resolved backend. run_slab_experiment checks
+these before replay. Cross-platform floating-point/PRNG equality is not guaranteed
+merely by version strings. Failed/cancelled calls propagate instead of fabricating
+completed records; persistent failure-job logs are a future pipeline concern.
+
+Each `heliosmc.slab-experiment.v1` bundle contains:
+
+| File / section | Contract |
+| --- | --- |
+| experiment.json / configuration | `heliosmc.slab-configuration.v1`, material schema version, scenario/config/group IDs, layers with full provenance, geometry/source, histories, seed, limits, confidence, algorithm/code/environment versions |
+| experiment.json / result | Completed execution status, all five fate counts, completed/unfinished totals, probabilities/SE/CI/unavailable reasons, timing seconds, warnings, limitations, run configuration; trajectories omitted explicitly |
+| experiment.json / verification | Problem ID, assumptions, analytical probability, MC estimate/SE/CI, absolute error, fixed alpha/criterion, binomial p-value and passed/failed/inconclusive; scope mathematical only |
+| experiment.json / ml_record | Explicit feature whitelist, targets, separate uncertainty/source/version/seed/verification/group metadata |
+| results.csv | Five outcome rows with configuration ID, count, estimate, SE, CI endpoints and unavailable reason; blank numeric cells mean unavailable, not zero |
+| arrays.npz | Only float64 edges/rates and int64 five-element counts; fixed member names, no trajectories/object arrays |
+
+The JSON envelope includes UTC export timestamp and SHA-256 of its canonical
+content excluding the hash field, plus exact sidecar hashes. Writers refuse
+overwrite. Experiment files stage in an automatically cleaned temporary directory
+beside the destination and publish as a directory only after serialization succeeds.
+Readers bound JSON/compressed and expanded NPZ size to 2 MiB, reject duplicate JSON
+keys/nonfinite numbers/unknown fields/versions, inspect NPY headers before array
+allocation and use allow_pickle=False. Exact CSV/array values must match JSON.
+Counts, warning flags, statistics, analytical verification, ML fields and IDs are
+recomputed/checked without changing the loaded values. A load is not scientific
+validation. Old recorded local-file acquisition is a declaration of a prior check.
+
+Self-checksums cannot detect an author who changes all content and recomputes all
+hashes. Callers should retain the writer's returned **exact file digest** elsewhere
+and supply expected_sha256 on load. Reserved built-in reference contents have an
+additional comparison to the audited factory. Arbitrary custom source declarations
+cannot be authenticated without independent evidence; no digital signature system
+or unsafe deserialization is introduced.
+
+Features are rates_per_cm, edges_cm, source_x_cm, source_mu, n_histories and
+max_collisions. Targets are the three terminal-outcome probabilities. No counts,
+uncertainty, runtime, seed, p-value or target-derived information enters features.
+Group ID hashes the exact rate/geometry/source problem and algorithm version,
+excluding seed, sample/population/budget/backend and descriptive material labels.
+It groups repeated configurations conservatively. It does not identify all
+mathematically equivalent re-partitionings or near-neighbor configurations; future
+generalization studies should also define parameter-domain holdouts.
+split_slab_groups uses only group hashes for deterministic holdout; no target-aware
+selection. All repeats stay together. Tiny demonstrations can have an empty split.
+Only complete mathematically passed synthetic/educational runs are accepted for
+training preparation. Scattering runs export normally with verification=None but
+are not promoted into this analytically certified subset. No model was trained.
+
+### Predeclared verification and interpretation
+
+The oracle handles zero-scattering layers, positive/negative source direction and
+arbitrary supported starting positions: escape along the initial direction has
+probability exp(-sum(a_i * traversed_width_i)/abs(mu)). It computes this independently
+from the kernel. The acceptance criterion fixed in configuration is a two-sided
+exact binomial p-value >= 1e-6 with no unfinished histories. Empty/censored runs
+are inconclusive; their full-outcome estimates and errors stay None. An exact
+endpoint test still has meaningful interval bounds even with zero plug-in SE.
+
+| Check | Criteria fixed before execution |
+| --- | --- |
+| Pure absorption / heterogeneous / oblique / left exit | Exact binomial alpha=1e-6; independent exponential oracle; zero impossible opposite exits |
+| Vacuum / interfaces / boundaries | Deterministic escape and exact history accounting, including zero collision budget |
+| Statistical convergence through simulate_slab | 48 fixed-seed repetitions at N=128 and 2048; RMSE ratio within 35% of sqrt(2048/128)=4; no demand for monotonic error in every run |
+| Coefficient changes | Rates 0, .2, 1 at N=4000, seed=77; each compared to exp(-rate) at alpha=1e-6 |
+| Reproducibility | Exact counts/statistics on replay, chunk/sample invariance; Python/Numba comparison in installed environment |
+| Limits / warnings | Collision and numeric limits counted; no completed-only renormalization; no_histories/collision_limit_reached/numerical_resolution_limit checked |
+| Archive integrity / scientific separation | Roundtrip equality, corrupted JSON/CSV/NPZ rejection, no pickle/object arrays, immutable tables, checksum/identity checks, reference and legacy exclusion from slab/ML |
+| Leakage / grouping | Fixed feature whitelist; rejected injected target; repeated seeds/populations/labels share group and cannot cross split |
+
+Code verification tests software contracts. Mathematical verification tests the
+implementation against solutions of the **stated abstract model**. Scientific
+validation would compare an appropriate physical model to independent experiments
+with matching state/composition/source and defensible uncertainty. Statistical
+uncertainty here quantifies finite-history sampling under IID assumptions, not
+source-property uncertainty, discretization error or model discrepancy. Passing
+these tests and transcribing a density correctly do not validate reactor physics.
+
+### Research readiness
+
+Dataset Pipeline: a small safe archive/replay/grouping foundation is implemented;
+large generation, persistent failure handling, registry/distribution and versioned
+split manifests remain future work. ML baseline: ready for a separately authorized
+small synthetic study with fixed holdouts and uncertainty-aware evaluation.
+PyTorch surrogate: not implemented and no dependency added; requires approval
+and evidence that a simple baseline is insufficient. Statistical comparison:
+analytic cases and complete-run uncertainties are available; multiplicity,
+correlated repetitions and distribution-shift evaluation require a study protocol.
+Computational payoff: no claim yet; measure dataset-generation cost, training,
+inference, amortization and target error on the same supported workloads. No
+performance benchmark was run for this data/export task.
+
+### Executed export demonstration
+
+The small demonstration bundle was generated and roundtripped during verification
+as JSON, CSV, NPZ, and two reference exports. It was not retained in this commit;
+the tests separately exercise the export contract and a three-repeat group. No
+training corpus or new script/module was added.
+
+Configuration: invented absorption rate .5/cm, scattering 0/cm, edges [0,2] cm,
+source x=0 and mu=1, N=4000, seed=123, abstract_slab_v1, Numba backend,
+pure_absorption_v1 criterion fixed before execution. Export, strict reload and
+replay were actually executed; counts/statistics matched. Reference files also
+roundtripped with all values/metadata preserved.
+
+| Observation | Value |
+| --- | ---: |
+| Absorbed / right escape / left escape | 2597 / 1403 / 0 |
+| Completed / unfinished histories | 4000 / 0 |
+| Analytical transmission exp(-1) | 0.36787944117144233 |
+| MC transmission | 0.35075 |
+| Plug-in standard error | 0.007545270662805941 |
+| Marginal exact 95% interval | [0.33595003150167047, 0.3657682893624801] |
+| Absolute error | 0.017129441171442328 |
+| Two-sided exact p-value | 0.024702748714846897 |
+| Predeclared alpha / status | 0.000001 / passed |
+
+The 95% interval **does not include** the analytical value in this particular
+random sample. That is reported, not hidden by selecting another seed. The
+predeclared regression threshold alpha=1e-6 is different from a 95% interval;
+passing that conservative check is not evidence of physical validation or of
+95% coverage in this one realization. Criteria were not adjusted after the run.
+
+Independently retain these exact export digests when using the example:
+
+| File | SHA-256 |
+| --- | --- |
+| experiment.json | `6edd3cd434b3df73ee78e9155705dd9a5c2a276129488d305ea322f44de2943c` |
+| water-reference.json | `64f2cdb4a02cc5dd19aa98404756ddbcb1f1258e88cfdb9296a1d9f78a5f6f5a` |
+| graphite-reference.json | `5ecce4050f0e7cb7c56371923aafaf5dc548e871c0911b57206e747c212f9900` |
+
+The same reload pattern from the repository root (after exporting a new bundle):
+
+```python
+from physics import load_slab_experiment, run_slab_experiment
+case = load_slab_experiment("my-new-experiment", expected_sha256=digest)
+replayed = run_slab_experiment(case["configuration"])
+assert replayed["result"]["outcome_counts"] == case["result"]["outcome_counts"]
+```
+
+Replay intentionally refuses a different code hash/environment; loading and
+inspecting a compatible old archive remains possible. A file revision changes
+the hash even if its algorithm is unchanged, so later revisions should retain
+this source revision for exact replay rather than disable the guard silently.
+
+### Executed tests and compatibility
+
+Installed environment: Python 3.14.4, NumPy 2.4.4, SciPy 1.18.1,
+Numba 0.67.0, pytest 9.1.1 on Windows. Existing interpreter used directly;
+WindowsApps python/py launchers were inaccessible. Nothing was installed.
+
+| Execution | Result |
+| --- | --- |
+| Final full suite, Numba available | **237 passed, 2 subtests passed**, 35.77 s |
+| Full suite, Numba disabled before importing pytest/application | **237 passed, 2 subtests passed**, 224.55 s |
+| Final averaging-status guard and material suite, Python fallback | **91 passed**, 1.46 s |
+| Export, strict reload, replay, reference roundtrips | Passed; actual values and hashes above |
+| AST preservation and diff checks | All prior physics function/class ASTs unchanged; git diff --check passed |
+
+The final fallback material rerun covers the last schema-only guard tightening
+after the full fallback process had imported its modules. Final full Numba run
+includes that tightening. No thresholds, old reference values or old tests were
+changed to obtain these results. No failing unit/regression test was observed.
+These are verification runs, not controlled performance benchmarks.
+
+Full suites used `pytest -q -p no:cacheprovider --basetemp <temporary directory>`
+inside automatically cleaned TemporaryDirectory contexts and disabled bytecode
+writes. The fallback set `sys.modules['numba']=None` before importing pytest.
+GUI Agg rendering, worker execution/cancellation/failure/restart, legacy providers,
+empty/limited scenarios and optional-Numba subprocess tests passed. Native desktop
+Tk interaction was not exercised in this stage; earlier Tk setup limitations are
+not claimed fixed. No GUI-facing flow or new import-time GUI dependency was added.
+
+All historical Material method ASTs, TransportData and MATERIALS assignments were
+checked identical to HEAD. GUI, worker, Neutron, main, numba_compat and monolith
+content remained unchanged (normalizing repository CRLF/LF). Existing slab kernel
+and simulate_slab ASTs are identical; research functions are appended outside them.
+No fission, multiplication, reactor algorithm or legacy transport number changed.
+
+Modified files: material.py, physics.py, tests/test_material_data.py,
+tests/test_educational_math.py, README.md, docs/ARCHITECTURE_AUDIT.md and
+docs/data_sources.json. Retained demo data: **none**. Deleted existing files: **none**. Added
+dependencies/production modules: **none**. No requirements file changed.
+Remaining limitations: no independently validated real-material transport,
+unknown graphite density/state and isotope fractions, limited ENDF source access,
+no large dataset/training/failure-job registry, no native GUI verification and
+no measured ML computational payoff. None is concealed by a schema-valid or
+mathematical-test-passed label.
