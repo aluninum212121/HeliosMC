@@ -519,7 +519,7 @@ def test_old_v1_experiment_archive_remains_readable(tmp_path):
     c = physics.create_slab_configuration("old-contract", [medium(.5)], [0., 1.], 200, seed=4, verification="pure_absorption_v1")
     # Reconstruct the exact old schema, including absence of modern metadata.
     c["schema_version"] = "heliosmc.slab-configuration.v1"
-    del c["material_mode"], c["material_model_version"]
+    del c["material_mode"], c["material_model_version"], c["reference_profile"]
     c["configuration_id"] = _content_hash({k:v for k,v in c.items() if k != "configuration_id"})
     r = physics.run_slab_experiment(c)
     assert "material_mode" not in r["ml_record"]["metadata"]
@@ -580,3 +580,94 @@ def test_reference_first_flight_analytic_ensemble_predeclared():
         assert r["unfinished_histories"] == 5000-k
         assert r["estimates"]["escaped_right"]["estimate"] is None
     assert stats.binomtest(sum(counts), 25000, expected).pvalue >= 1e-6
+
+
+def graphite_profile(profile_id):
+    from material import get_reference_profiles, get_reference_transport_dataset, DataOrigin
+    profile = get_reference_profiles()[profile_id]
+    return get_reference_transport_dataset("Графит",profile_id=profile_id,approximation=profile["approximation"],
+        density=1.6,density_origin=DataOrigin(original_reference="Invented sample for profile software tests",
+            processing_description="Caller input 1.6 g/cm^3 at 300 K; no specimen measurement claimed"))
+
+
+@pytest.mark.parametrize("profile_id", ["jendl5_point_0p0253ev", "jendl40_point_0p0253ev", "jendl40_maxwell_flux_0p0253ev"])
+def test_profile_selection_reproducibility_export_and_kernel_equivalence(tmp_path, profile_id):
+    from material import resolve_reference_rates
+    d = graphite_profile(profile_id)
+    c = physics.create_slab_configuration("profile-roundtrip",[d],[0.,2.],700,seed=301,
+        material_mode="reference",backend="python",max_collisions=100)
+    assert c["schema_version"] == "heliosmc.slab-configuration.v3"
+    assert c["reference_profile"]["profile_id"] == profile_id
+    r = physics.run_slab_experiment(c)
+    plain = physics.simulate_slab([medium(*resolve_reference_rates(d))],[0.,2.],700,seed=301,
+        backend="python",max_collisions=100)
+    assert r["result"]["outcome_counts"] == plain["outcome_counts"]
+    assert r["result"]["estimates"] == plain["estimates"]
+    assert r["result"]["run_info"]["reference_profile"] == c["reference_profile"]
+    assert r["ml_record"]["metadata"]["reference_profile"] == c["reference_profile"]
+    assert "reference_profile" not in r["ml_record"]["features"]
+    digest = physics.export_slab_experiment(r,tmp_path / "run")
+    restored = physics.load_slab_experiment(tmp_path / "run",expected_sha256=digest)
+    assert restored == r
+    replay = physics.run_slab_experiment(restored["configuration"])
+    assert replay["result"]["outcome_counts"] == r["result"]["outcome_counts"]
+    assert replay["result"]["estimates"] == r["result"]["estimates"]
+    if physics.HAS_NUMBA:
+        compiled = physics.simulate_slab([d],[0.,2.],700,seed=301,material_mode="reference",backend="numba",max_collisions=100)
+        assert compiled["outcome_counts"] == r["result"]["outcome_counts"]
+        assert compiled["estimates"] == r["result"]["estimates"]
+
+
+def test_profile_mixing_and_library_mixing_are_rejected():
+    from material import REFERENCE_POINT_PROFILE, REFERENCE_CONTROL_PROFILE, REFERENCE_MAXWELL_PROFILE
+    layers = [graphite_profile(p) for p in (REFERENCE_POINT_PROFILE,REFERENCE_CONTROL_PROFILE,REFERENCE_MAXWELL_PROFILE)]
+    for a,b in ((layers[0],layers[1]),(layers[1],layers[2])):
+        with pytest.raises(ValueError,match="same energy profile"):
+            physics.simulate_slab([a,b],[0.,1.,2.],10,material_mode="reference")
+    # Original JENDL-5 water and graphite have matching spectrum/library.
+    r = physics.simulate_slab([reference_water(),layers[0]],[0.,.1,.2],10,seed=3,material_mode="reference")
+    assert r["run_info"]["reference_profile"]["profile_id"] == REFERENCE_POINT_PROFILE
+
+
+@pytest.mark.parametrize("field,value", [("profile_id","unknown"),("energy_bounds_ev",[1e-5,1.]),
+    ("spectrum_kT_ev",.04),("material_temperature_K",298.15),("spectrum_temperature_K",300.),
+    ("numerical_verification_status","scientifically_validated"),("source_library","JENDL-5")])
+def test_profile_metadata_forgery_rejected_even_with_recomputed_configuration_hash(tmp_path,field,value):
+    from material import REFERENCE_MAXWELL_PROFILE, _content_hash
+    c = physics.create_slab_configuration("profile-forgery",[graphite_profile(REFERENCE_MAXWELL_PROFILE)],
+        [0.,1.],20,seed=9,material_mode="reference")
+    r = physics.run_slab_experiment(c)
+    c = r["configuration"]
+    c["reference_profile"][field] = value
+    c["configuration_id"] = _content_hash({k:v for k,v in c.items() if k != "configuration_id"})
+    with pytest.raises(ValueError,match="reference profile mismatch"):
+        physics.export_slab_experiment(r,tmp_path / "bad")
+
+
+@pytest.mark.parametrize("kind", ["reference","legacy"])
+def test_original_v2_experiment_archive_remains_readable(tmp_path,kind):
+    from material import _content_hash
+    layer = reference_water() if kind == "reference" else medium(.3,.2)
+    c = physics.create_slab_configuration("v2-compatibility",[layer],[0.,.2],100,seed=71,material_mode=kind)
+    c["schema_version"] = "heliosmc.slab-configuration.v2"
+    del c["reference_profile"]
+    c["configuration_id"] = _content_hash({k:v for k,v in c.items() if k != "configuration_id"})
+    r = physics.run_slab_experiment(c)
+    assert "reference_profile" not in r["result"]["run_info"]
+    assert "reference_profile" not in r["ml_record"]["metadata"]
+    digest = physics.export_slab_experiment(r,tmp_path / "v2")
+    assert physics.load_slab_experiment(tmp_path / "v2",expected_sha256=digest) == r
+
+
+def test_fixed_spectrum_group_warning_and_repeat_group_identity():
+    from material import REFERENCE_MAXWELL_PROFILE
+    ids = []
+    for seed in (19,20):
+        c = physics.create_slab_configuration("group-repeat",[graphite_profile(REFERENCE_MAXWELL_PROFILE)],
+            [0.,1.],100,seed=seed,material_mode="reference")
+        r = physics.run_slab_experiment(c)
+        ids.append(c["group_id"])
+        assert "reference_free_gas_fixed_spectrum_approximation" in r["result"]["warnings"]
+        assert "prescribed_flux_spectrum_not_evolved" in r["result"]["limitations"]
+        assert not r["ml_record"]["metadata"]["eligible_for_training"]
+    assert ids[0] == ids[1]

@@ -609,3 +609,114 @@ def test_reserved_reference_transport_export_rejects_rehashed_tampering(tmp_path
     (tmp_path / "ref.json").write_text(json.dumps(raw), encoding="utf-8")
     with pytest.raises(ValueError, match="reference transport identity"):
         load_material_reference(tmp_path / "ref.json")
+
+
+def graphite_profile(profile_id):
+    from material import get_reference_profiles, get_reference_transport_dataset
+    profile = get_reference_profiles()[profile_id]
+    origin = DataOrigin(original_reference="Software fixture, not a measured graphite sample",
+        processing_description="Caller chooses 1.6 g/cm^3 at 300 K")
+    return get_reference_transport_dataset("Графит", profile_id=profile_id,
+        approximation=profile["approximation"], density=1.6, density_origin=origin)
+
+
+def test_reference_profile_catalog_is_fresh_scoped_and_explicit():
+    from material import get_reference_profiles, REFERENCE_POINT_PROFILE, REFERENCE_CONTROL_PROFILE, REFERENCE_MAXWELL_PROFILE
+    profiles = get_reference_profiles()
+    assert set(profiles) == {REFERENCE_POINT_PROFILE, REFERENCE_CONTROL_PROFILE, REFERENCE_MAXWELL_PROFILE}
+    for p in profiles.values():
+        assert p["material_temperature_K"] == 300.
+        assert p["numerical_verification_status"] == "source_checked"
+        assert p["scientific_validation_status"] == "unverified"
+        assert p["source_urls"] and p["source_version"] and p["limitations"]
+    assert profiles[REFERENCE_POINT_PROFILE]["available_materials"] == ["Вода (H₂O)", "Графит"]
+    group = profiles[REFERENCE_MAXWELL_PROFILE]
+    assert group["energy_bounds_ev"] == [1e-5, 10.]
+    assert group["spectrum_kind"] == "flux_average" and group["spectrum_kT_ev"] == .0253
+    assert group["spectrum_temperature_K"] == pytest.approx(293.594308476915, rel=1e-12)
+    assert "Вода (H₂O)" in group["unavailable_materials"]
+    group["energy_bounds_ev"][0] = 0.
+    assert get_reference_profiles()[REFERENCE_MAXWELL_PROFILE]["energy_bounds_ev"] == [1e-5, 10.]
+
+
+def test_published_carbon_macs_is_converted_to_normalized_flux_mean():
+    from material import REFERENCE_MAXWELL_PROFILE, resolve_reference_rates
+    from scipy.constants import Avogadro
+    d = graphite_profile(REFERENCE_MAXWELL_PROFILE)
+    q = {q.name:q for q in d.quantities}
+    # Independent source transcriptions, not group values treated as point data.
+    assert q["published_macs_sigma_a_C0"].values == .003862
+    assert q["published_macs_sigma_s_C0"].values == 5.575
+    factor = np.sqrt(np.pi)/2
+    assert q["sigma_a_C0"].values == pytest.approx(.003862*factor, rel=1e-15)
+    assert q["sigma_s_C0"].values == pytest.approx(5.575*factor, rel=1e-15)
+    assert q["sigma_a_C0"].averaging.method == "normalized_maxwell_flux"
+    assert q["sigma_a_C0"].averaging.energy_bounds_ev == (1e-5,10.)
+    np.testing.assert_allclose(resolve_reference_rates(d),
+        1.6*Avogadro/12.0107*1e-24*factor*np.array([.003862,5.575]), rtol=2e-15)
+    assert d.composition == (("C0",1.),)
+    assert all("JENDL-5" not in q.origin.source_library for q in d.quantities if q.unit == "barn")
+    assert d.quality.verification_status == "unverified"  # Caller density is not upgraded.
+
+
+def test_point_control_and_thermal_group_do_not_alias_each_other():
+    from material import REFERENCE_CONTROL_PROFILE, REFERENCE_MAXWELL_PROFILE
+    point = graphite_profile(REFERENCE_CONTROL_PROFILE)
+    group = graphite_profile(REFERENCE_MAXWELL_PROFILE)
+    p = {q.name:q for q in point.quantities}
+    g = {q.name:q for q in group.quantities}
+    assert p["sigma_s_C0"].values == 4.942
+    assert p["sigma_a_C0"].values == .003860
+    assert p["sigma_s_C0"].averaging.method == "point_evaluation"
+    assert p["sigma_s_C0"].averaging.energy_bounds_ev == (.0253,.0253)
+    assert point.material_id != group.material_id
+    assert p["sigma_s_C0"].values != g["sigma_s_C0"].values
+
+
+@pytest.mark.parametrize("profile_id", ["jendl5_point_0p0253ev", "jendl40_point_0p0253ev", "jendl40_maxwell_flux_0p0253ev"])
+def test_all_reference_profile_material_archives_roundtrip(tmp_path, profile_id):
+    from material import export_material_reference, load_material_reference, material_to_dict, resolve_reference_profile
+    d = graphite_profile(profile_id)
+    digest = export_material_reference(d,tmp_path / "profile.json")
+    restored = load_material_reference(tmp_path / "profile.json",expected_sha256=digest)
+    assert material_to_dict(restored) == material_to_dict(d)
+    assert resolve_reference_profile([restored])["profile_id"] == profile_id
+
+
+@pytest.mark.parametrize("profile_id", ["epithermal", "fast", "", None, True])
+def test_unknown_or_invalid_profile_never_falls_back(profile_id):
+    from material import get_reference_transport_dataset, REFERENCE_APPROXIMATION
+    with pytest.raises((ValueError,TypeError)):
+        get_reference_transport_dataset("Вода (H₂O)", approximation=REFERENCE_APPROXIMATION, profile_id=profile_id)
+
+
+@pytest.mark.parametrize("profile_id", ["jendl40_point_0p0253ev", "jendl40_maxwell_flux_0p0253ev"])
+def test_incomplete_water_profile_is_unavailable(profile_id):
+    from material import get_reference_transport_dataset, get_reference_profiles
+    with pytest.raises(ValueError,match="unavailable.*Complete source-checked"):
+        get_reference_transport_dataset("Вода (H₂O)",profile_id=profile_id,
+            approximation=get_reference_profiles()[profile_id]["approximation"])
+
+
+def test_maxwell_group_requires_its_own_explicit_approximation():
+    from material import get_reference_transport_dataset, REFERENCE_MAXWELL_PROFILE, REFERENCE_APPROXIMATION
+    with pytest.raises(ValueError,match="free_gas_fixed_spectrum"):
+        get_reference_transport_dataset("Графит",profile_id=REFERENCE_MAXWELL_PROFILE,approximation=REFERENCE_APPROXIMATION)
+
+
+@pytest.mark.parametrize("change", ["bounds", "weight", "source", "raw_macs", "group_value", "isotopes", "profile_id"])
+def test_group_material_semantic_forgery_rejected(change):
+    from material import REFERENCE_MAXWELL_PROFILE, resolve_reference_rates
+    d = graphite_profile(REFERENCE_MAXWELL_PROFILE)
+    if change in ("bounds","weight"):
+        d = replace(d, quantities=tuple(replace(q,averaging=replace(q.averaging,
+            **({"energy_bounds_ev":(1e-5,1.)} if change == "bounds" else {"weighting":"uniform spectrum"})))
+            if q.averaging else q for q in d.quantities))
+    if change == "source": d = replace(d,origin=replace(d.origin,source_url="https://example.org/fake"))
+    if change in ("raw_macs","group_value"):
+        name = "published_macs_sigma_s_C0" if change == "raw_macs" else "sigma_s_C0"
+        d = replace(d,quantities=tuple(replace(q,values=1.) if q.name == name else q for q in d.quantities))
+    if change == "isotopes": d = replace(d,composition=(("C12",1.),))
+    if change == "profile_id": d = replace(d,material_id=d.material_id.replace("maxwell_flux","unknown"))
+    with pytest.raises(ValueError,match="reference transport"):
+        resolve_reference_rates(d)

@@ -1105,6 +1105,10 @@ def get_reference_dataset(material_key: str) -> MaterialDataset:
 
 
 REFERENCE_APPROXIMATION = "free_gas_point_isotropic_v1"
+REFERENCE_GROUP_APPROXIMATION = "free_gas_fixed_spectrum_isotropic_v1"
+REFERENCE_POINT_PROFILE = "jendl5_point_0p0253ev"
+REFERENCE_CONTROL_PROFILE = "jendl40_point_0p0253ev"
+REFERENCE_MAXWELL_PROFILE = "jendl40_maxwell_flux_0p0253ev"
 REFERENCE_WARNINGS = ("reference_free_gas_fixed_energy_approximation",)
 REFERENCE_LIMITATIONS = ("no_bound_atom_thermal_scattering", "no_energy_evolution",
                         "isotropic_laboratory_scattering_approximation",
@@ -1124,6 +1128,50 @@ _JENDL_POINT = {
     "C12": (6, 12, 4.950, 3.877e-3, 0.),
     "C13": (6, 13, 5.557, 1.488e-3, 0.),
 }
+
+
+def get_reference_profiles() -> dict:
+    """Fresh inert descriptors; availability is scoped to checked numeric inputs.
+
+    JENDL-4.0 is kept separate from JENDL-5. Its published C-0 data are per
+    natural-carbon atom, not reconstructed from the JENDL-5 isotope numbers.
+    No cross-library substitution fills missing water channels.
+    """
+    from scipy.constants import Boltzmann, elementary_charge
+    carbon_url = "https://wwwndc.jaea.go.jp/cgi-bin/Tab80WWW.cgi?iso=C000&lib=J40"
+    report_url = "https://jopss.jaea.go.jp/search/servlet/search?5026620=&language=1"
+    profiles = {}
+    for profile_id, library, kind in ((REFERENCE_POINT_PROFILE, "JENDL-5", "point"),
+            (REFERENCE_CONTROL_PROFILE, "JENDL-4.0", "point"),
+            (REFERENCE_MAXWELL_PROFILE, "JENDL-4.0", "flux_average")):
+        averaged = kind == "flux_average"
+        profiles[profile_id] = dict(
+            profile_id=profile_id, spectrum_kind=kind, energy_unit="eV",
+            energy_bounds_ev=[1e-5, 10.] if averaged else [.0253, .0253],
+            spectrum="w(E)=E*exp(-E/0.0253 eV), normalized on [1e-5,10] eV" if averaged else
+                     "Monoenergetic point at 0.0253 eV; no spectral averaging",
+            spectrum_kT_ev=.0253 if averaged else None,
+            spectrum_temperature_K=.0253*elementary_charge/Boltzmann if averaged else None,
+            material_temperature_K=300., source_library=library,
+            source_version="5 (2021); HTML snapshot 2026-11-10; raw-file update unpinned" if library == "JENDL-5" else
+                           "4.0 (2010); HTML snapshot 2026-11-10; raw-file update unpinned",
+            source_urls=["https://wwwndc.jaea.go.jp/jendl/j5/elm/calc.html"] if library == "JENDL-5" else [carbon_url, report_url],
+            retrieval_date="2026-11-10", numerical_verification_status="source_checked",
+            scientific_validation_status="unverified",
+            approximation=REFERENCE_GROUP_APPROXIMATION if averaged else REFERENCE_APPROXIMATION,
+            averaging_method="normalized_maxwell_flux" if averaged else "point_evaluation",
+            processing_notes="sigma_group = sqrt(pi)/2 * published JAEA MACS; no sigma(E) file integrated locally" if averaged else
+                             "Published point column only; barn prefixes converted explicitly",
+            available_materials=["Вода (H₂O)", "Графит"] if library == "JENDL-5" else ["Графит"],
+            unavailable_materials={} if library == "JENDL-5" else {
+                "Вода (H₂O)": "Complete source-checked JENDL-4.0 water-isotope channel set not obtained; no isotope omission or cross-library fallback"},
+            limitations=["Free-gas nuclear data; no bound-atom S(alpha,beta) or crystal effects",
+                         "Isotropic laboratory scattering closure; no energy redistribution",
+                         "Source checking does not establish physical validation or propagated parameter uncertainty"] +
+                        (["Prescribed flux spectrum held fixed after collisions and throughout all layers",
+                          "Neutron spectrum temperature differs from the 300 K material/processing temperature",
+                          "Attenuation at an averaged rate is not spectrum-integrated attenuation; no spectral hardening"] if averaged else []))
+    return profiles
 
 
 def _water_density_0p1mpa(temperature):
@@ -1147,19 +1195,34 @@ def _water_density_0p1mpa(temperature):
 
 
 def get_reference_transport_dataset(material_key, *, approximation,
-                                    density=None, density_origin=None) -> MaterialDataset:
-    """Explicit point-data closure for the existing NONREACTIVE slab model.
+                                    density=None, density_origin=None,
+                                    profile_id=REFERENCE_POINT_PROFILE) -> MaterialDataset:
+    """Explicit point or fixed-spectrum closure for the NONREACTIVE slab model.
 
-    This is an acknowledged free-gas, fixed-energy, isotropic-LAB approximation,
+    This is an acknowledged free-gas, one-group, isotropic-LAB approximation,
     not S(alpha,beta) water/graphite transport. No universal spectral average,
     isotope inference, density fallback, or mapping to the multiplying kernel.
     Graphite requires caller density AND lineage; it remains unverified input.
+    profile_id defaults to the original JENDL-5 point preset without changing
+    its contents. Each other profile requires its documented approximation.
     Nuclear source tables and printed unit prefixes were checked 2026-11-10.
     """
     if material_key not in ("Вода (H₂O)", "Графит"):
         raise ValueError("reference transport unavailable: only water and graphite are defined; uranium presets remain legacy_unverified")
-    if approximation != REFERENCE_APPROXIMATION:
-        raise ValueError(f"explicit approximation={REFERENCE_APPROXIMATION!r} is required; bound-atom transport is unsupported")
+    _text("profile_id", profile_id)
+    profiles = get_reference_profiles()
+    if profile_id not in profiles:
+        raise ValueError(f"unknown reference profile: {profile_id!r}")
+    profile = profiles[profile_id]
+    if material_key not in profile["available_materials"]:
+        raise ValueError(f"reference profile {profile_id!r} unavailable for {material_key}: "
+                         + profile["unavailable_materials"][material_key])
+    if approximation != profile["approximation"]:
+        raise ValueError(f"explicit approximation={profile['approximation']!r} is required; bound-atom transport is unsupported")
+    if profile_id != REFERENCE_POINT_PROFILE:
+        base = get_reference_transport_dataset(material_key, approximation=REFERENCE_APPROXIMATION,
+            density=density, density_origin=density_origin)
+        return _graphite_jendl40_profile(base, profile)
     base = get_reference_dataset(material_key)
     water = material_key == "Вода (H₂O)"
     scope = ("Point evaluation at 0.0253 eV, free-gas nuclear data processed at 300 K; not a spectral average.",
@@ -1243,16 +1306,93 @@ def get_reference_transport_dataset(material_key, *, approximation,
                 ("Graphite density is user supplied and not independently source-checked.",))))
 
 
-def _check_reference_transport_identity(dataset):
+def _graphite_jendl40_profile(base, profile):
+    """Published natural-carbon point/MACS columns, never a JENDL-5 mixture.
+
+    Only MT2 and MT102 are open below 10 eV for this evaluation. The published
+    MACS definition includes 2/sqrt(pi); remove it for a normalized flux mean.
+    Density remains caller supplied with the original unverified status.
+    """
+    averaged = profile["spectrum_kind"] == "flux_average"
+    scope = tuple(profile["limitations"]) + (profile["spectrum"],
+        "Natural-carbon C-0 evaluation per atom; isotope fractions not independently resolved from raw evaluation.",)
+    averaging = AveragingConditions(profile["averaging_method"], profile["spectrum"],
+        tuple(profile["energy_bounds_ev"]), profile["source_urls"][0], scope)
+    origin = DataOrigin(source_library="JAEA JENDL-4.0 numerical summary, natural carbon C-0",
+        library_version=profile["source_version"], source_url=profile["source_urls"][0],
+        original_reference="C-0, MT2 and MT102, " + ("Maxwellian Average column" if averaged else "0.0253-eV column"),
+        retrieval_date=profile["retrieval_date"], processing_description=profile["processing_notes"])
+    # Exact published columns (barn); MT102 is printed as 3.862/3.860 mb.
+    raw = {"sigma_a": 3.862e-3 if averaged else 3.860e-3,
+           "sigma_s": 5.575 if averaged else 4.942}
+    factor = math.sqrt(math.pi)/2 if averaged else 1.
+    nuclear = tuple(MaterialQuantity(f"{channel}_C0", "barn", value*factor,
+        data_kind="derived" if averaged else "evaluated", origin=origin,
+        averaging=averaging, applicability_notes=scope) for channel, value in raw.items())
+    published = tuple(MaterialQuantity(f"published_macs_{channel}_C0", "barn", value,
+        data_kind="evaluated", origin=replace(origin, processing_description="Transcribed published MACS before normalization"),
+        applicability_notes=scope) for channel, value in raw.items()) if averaged else ()
+    aggregate_origin = replace(origin, processing_description=origin.processing_description +
+        "; one C-0 atom per normalization unit: sum(amount_i*sigma_i), no isotope-library mixing")
+    aggregate = tuple(MaterialQuantity(channel, "barn", value*factor, data_kind="derived",
+        origin=aggregate_origin, averaging=averaging, applicability_notes=scope) for channel, value in raw.items())
+    return replace(base, material_id=base.material_id + "@" + profile["profile_id"],
+        name="Graphite JENDL-4.0 " + ("Maxwellian flux approximation" if averaged else "point control"),
+        source="JENDL-4.0 natural carbon; NIST SRD69 molar mass; caller graphite density",
+        version=profile["approximation"], composition=(("C0", 1.),), composition_basis="atom_fraction",
+        material_category="component", origin=replace(origin,
+            original_reference="JENDL-4.0 C-0 elemental natural-carbon evaluation; no isotope-resolved assay assumed"),
+        provenance=("Numerical C-0 table and JAEA-Data/Code 2010-017 abstract checked 2026-11-10.",
+                    "No raw ENDF processing, no pointwise interpolation and no change to collision kinematics."),
+        quantities=(*base.quantities[:2], *published, *nuclear, *aggregate),
+        quality=DataQuality(validation_status="schema_validated", verification_status="unverified",
+            applicability_notes=scope, known_limitations=scope + (
+                "Graphite sample density is user supplied and not independently source-checked.",
+                "Nuclear table precision, raw-file revision and covariance not independently checked.",)))
+
+
+def _reference_profile_selection(dataset):
+    base_id, _, profile_id = dataset.material_id.partition("@")
     keys = {"heliosmc:reference-transport-water": "Вода (H₂O)",
             "heliosmc:reference-transport-graphite": "Графит"}
-    if dataset.material_id not in keys:
-        raise ValueError("reference transport requires an audited point dataset; required nuclear data are missing or unsupported")
-    key = keys[dataset.material_id]
+    if base_id not in keys or ("@" in dataset.material_id and not profile_id):
+        raise ValueError("reference transport requires an audited profile dataset; required nuclear data are missing or unsupported")
+    profile_id = profile_id or REFERENCE_POINT_PROFILE
+    if profile_id not in get_reference_profiles() or ("@" in dataset.material_id and profile_id == REFERENCE_POINT_PROFILE):
+        raise ValueError("reference transport identity has an unknown/noncanonical profile")
+    return keys[base_id], profile_id
+
+
+def _check_reference_transport_identity(dataset):
+    key, profile_id = _reference_profile_selection(dataset)
+    profile = get_reference_profiles()[profile_id]
     kwargs = {} if key == "Вода (H₂O)" else dict(density=dataset.state.density, density_origin=dataset.state.origin)
-    expected = get_reference_transport_dataset(key, approximation=REFERENCE_APPROXIMATION, **kwargs)
+    expected = get_reference_transport_dataset(key, approximation=profile["approximation"], profile_id=profile_id, **kwargs)
     if material_to_dict(dataset) != material_to_dict(expected):
         raise ValueError("reference transport identity/content mismatch: state, energy, composition, units or source values changed")
+
+
+def resolve_reference_profile(layers) -> dict:
+    """One common imposed profile across a slab; validate every material first."""
+    if not isinstance(layers, (tuple, list)) or not layers:
+        raise ValueError("reference profile requires nonempty layers")
+    ids = []
+    for dataset in layers:
+        if not isinstance(dataset, MaterialDataset) or dataset.data_kind != "reference":
+            raise ValueError("reference mode requires reference datasets; mixing modes is forbidden")
+        _check_reference_transport_identity(dataset)
+        ids.append(_reference_profile_selection(dataset)[1])
+    if len(set(ids)) != 1:
+        raise ValueError("reference layers must use the same energy profile and nuclear library")
+    return get_reference_profiles()[ids[0]]
+
+
+def reference_result_notes(profile):
+    """Versioned solver notes; published spectra do not evolve in the kernel."""
+    if profile["spectrum_kind"] == "flux_average":
+        return (["reference_free_gas_fixed_spectrum_approximation"],
+                [*REFERENCE_LIMITATIONS, "prescribed_flux_spectrum_not_evolved"])
+    return list(REFERENCE_WARNINGS), list(REFERENCE_LIMITATIONS)
 
 
 def resolve_reference_rates(dataset: MaterialDataset) -> tuple[float, float]:

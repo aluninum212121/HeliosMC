@@ -747,8 +747,8 @@ def simulate_slab(layers, edges_cm, n_histories=10000, *, seed=None,
     Memory is O(layers + samples*(max_collisions+2)), independent of population.
     Cancellation is cooperative between batches and raises without partial output.
     material_mode='legacy' preserves the original explicit-rate contract.
-    'reference' explicitly derives rates from audited fixed-energy free-gas data;
-    it adds no bound-state physics or energy tracking to the kernel.
+    'reference' explicitly derives rates from an audited point/fixed-spectrum
+    profile; it adds no bound-state physics or energy tracking to the kernel.
     """
     import scipy
 
@@ -772,6 +772,9 @@ def simulate_slab(layers, edges_cm, n_histories=10000, *, seed=None,
     if not isinstance(layers, (tuple, list)) or not layers:
         raise ValueError("layers must be a nonempty sequence of MaterialDataset")
     layers = tuple(layers)
+    if material_mode == "reference":
+        from material import resolve_reference_profile
+        profile = resolve_reference_profile(layers)
     samples = min(max_samples, n_histories)
     # Check before layer/source/scratch allocations, including owning path copies.
     required = 4096 + len(layers) * 4096 + samples * ((max_collisions + 2) * 16 + 256)
@@ -841,16 +844,19 @@ def simulate_slab(layers, edges_cm, n_histories=10000, *, seed=None,
             numba_version=getattr(sys.modules.get("numba"), "__version__", None) if use_numba else None))
     result["timing"]["total_seconds"] = perf_counter() - started
     if material_mode == "reference":
-        from material import REFERENCE_WARNINGS, REFERENCE_LIMITATIONS
-        result["warnings"].extend(REFERENCE_WARNINGS)
-        result["limitations"].extend(REFERENCE_LIMITATIONS)
+        from material import reference_result_notes
+        reference_warnings, reference_limits = reference_result_notes(profile)
+        result["warnings"].extend(reference_warnings)
+        result["limitations"].extend(reference_limits)
         result["run_info"]["material_mode"] = "reference"
+        result["run_info"]["reference_profile"] = profile
     return result
 
 
 # Research I/O stays outside both transport kernels. No new reaction model.
 SLAB_EXPORT_SCHEMA = "heliosmc.slab-experiment.v1"
-SLAB_CONFIGURATION_SCHEMA = "heliosmc.slab-configuration.v2"
+SLAB_CONFIGURATION_SCHEMA = "heliosmc.slab-configuration.v3"
+_SLAB_CONFIGURATION_V2 = "heliosmc.slab-configuration.v2"
 _SLAB_CONFIGURATION_V1 = "heliosmc.slab-configuration.v1"
 _SLAB_OUTCOMES = ("absorbed", "escaped_left", "escaped_right", "collision_limit", "numeric_limit")
 
@@ -888,7 +894,7 @@ def create_slab_configuration(scenario_id, layers, edges_cm, n_histories=10000, 
     None seed is resolved now and archived. A zero-history validation call uses
     the existing public checks without executing a transport history.
     """
-    from material import MATERIAL_SCHEMA, REFERENCE_APPROXIMATION, _text, _json_data, _content_hash
+    from material import MATERIAL_SCHEMA, _text, _json_data, _content_hash
     _text("scenario_id", scenario_id)
     _integer("n_histories", n_histories)
     if n_histories > np.iinfo(np.int64).max:
@@ -907,7 +913,8 @@ def create_slab_configuration(scenario_id, layers, edges_cm, n_histories=10000, 
         backend="numba" if info["backend"] == "numba" else "python", max_memory_bytes=info["max_memory_bytes"])
     config = dict(schema_version=SLAB_CONFIGURATION_SCHEMA, material_schema_version=MATERIAL_SCHEMA,
         material_mode=material_mode,
-        material_model_version=REFERENCE_APPROXIMATION if material_mode == "reference" else "explicit_rates_v1",
+        material_model_version=info["reference_profile"]["approximation"] if material_mode == "reference" else "explicit_rates_v1",
+        reference_profile=info.get("reference_profile"),
         scenario_id=scenario_id, algorithm_version="abstract_slab_v1", code_sha256=_research_code_hashes(),
         environment={k: info[k] for k in ("python_version", "numpy_version", "scipy_version", "numba_version")},
         rng="PCG64", requested_seed=info["seed"], parameters=parameters, layers=_json_data(info["layers"]),
@@ -922,20 +929,23 @@ def create_slab_configuration(scenario_id, layers, edges_cm, n_histories=10000, 
 
 
 def _validate_slab_configuration(config, *, replay=False):
-    from material import MATERIAL_SCHEMA, REFERENCE_APPROXIMATION, material_from_dict, _object_fields, _content_hash, _sha256, _text
+    from material import (MATERIAL_SCHEMA, REFERENCE_APPROXIMATION, REFERENCE_POINT_PROFILE,
+        resolve_reference_profile, material_from_dict, _object_fields, _content_hash, _sha256, _text)
     names = ("schema_version", "material_schema_version", "scenario_id", "algorithm_version", "code_sha256",
              "environment", "rng", "requested_seed", "parameters", "layers", "verification_protocol",
              "group_id", "configuration_id")
-    if isinstance(config, dict) and config.get("schema_version") == SLAB_CONFIGURATION_SCHEMA:
+    if isinstance(config, dict) and config.get("schema_version") in (SLAB_CONFIGURATION_SCHEMA, _SLAB_CONFIGURATION_V2):
         names += ("material_mode", "material_model_version")
+    if isinstance(config, dict) and config.get("schema_version") == SLAB_CONFIGURATION_SCHEMA:
+        names += ("reference_profile",)
     _object_fields(config, "configuration", names, names)
-    if (config["schema_version"] not in (SLAB_CONFIGURATION_SCHEMA, _SLAB_CONFIGURATION_V1) or config["material_schema_version"] != MATERIAL_SCHEMA
+    if (config["schema_version"] not in (SLAB_CONFIGURATION_SCHEMA, _SLAB_CONFIGURATION_V2, _SLAB_CONFIGURATION_V1) or config["material_schema_version"] != MATERIAL_SCHEMA
             or config["algorithm_version"] != "abstract_slab_v1" or config["rng"] != "PCG64"):
         raise ValueError("unsupported configuration version or RNG")
     mode = config.get("material_mode", "legacy")
     if mode not in ("legacy", "reference"):
         raise ValueError("material_mode must be legacy or reference")
-    if "material_model_version" in config and config["material_model_version"] != (
+    if config["schema_version"] != SLAB_CONFIGURATION_SCHEMA and "material_model_version" in config and config["material_model_version"] != (
             REFERENCE_APPROXIMATION if mode == "reference" else "explicit_rates_v1"):
         raise ValueError("unsupported material model version")
     _text("scenario_id", config["scenario_id"])
@@ -959,6 +969,14 @@ def _validate_slab_configuration(config, *, replay=False):
     if not isinstance(config["layers"], list) or not config["layers"]:
         raise ValueError("configuration requires layers")
     layers = [material_from_dict(d) for d in config["layers"]]
+    profile = resolve_reference_profile(layers) if mode == "reference" else None
+    if config["schema_version"] == SLAB_CONFIGURATION_SCHEMA:
+        if _content_hash(config["reference_profile"]) != _content_hash(profile):
+            raise ValueError("configuration reference profile mismatch")
+        if config["material_model_version"] != (profile["approximation"] if profile else "explicit_rates_v1"):
+            raise ValueError("unsupported material model version")
+    elif profile is not None and profile["profile_id"] != REFERENCE_POINT_PROFILE:
+        raise ValueError("new reference profiles require configuration schema v3")
     # Read archives even without Numba installed; replay still requires its backend.
     checked = simulate_slab(layers, material_mode=mode, **(p | dict(n_histories=0, backend="python")))["run_info"]
     if config["group_id"] != _slab_group_id(config):
@@ -1034,7 +1052,7 @@ def _slab_ml_record(config, result, verification):
             verification_status=verification["status"] if verification else "not_checked",
             uncertainty=result["estimates"], warnings=result["warnings"],
             eligible_for_training=eligible and verification is not None and verification["status"] == "passed"))
-    if config["schema_version"] == SLAB_CONFIGURATION_SCHEMA:
+    if config["schema_version"] in (SLAB_CONFIGURATION_SCHEMA, _SLAB_CONFIGURATION_V2):
         record["metadata"].update(material_mode=config["material_mode"],
             material_model_version=config["material_model_version"],
             parameter_verification=[d["quality"]["verification_status"] for d in config["layers"]],
@@ -1043,6 +1061,8 @@ def _slab_ml_record(config, result, verification):
             # Source checking of cross sections does not verify the approximation
             # against a real material. Existing certified training subset stays strict.
             record["metadata"]["eligible_for_training"] = False
+    if config["schema_version"] == SLAB_CONFIGURATION_SCHEMA:
+        record["metadata"]["reference_profile"] = config["reference_profile"]
     return record
 
 
@@ -1056,6 +1076,9 @@ def run_slab_experiment(config, *, cancel_event=None):
     layers = _validate_slab_configuration(config, replay=True)
     result = simulate_slab(layers, **config["parameters"], cancel_event=cancel_event,
                            material_mode=config.get("material_mode", "legacy"))
+    if config["schema_version"] != SLAB_CONFIGURATION_SCHEMA:
+        # Preserve the original v1/v2 result/metadata layout for old archives.
+        result["run_info"].pop("reference_profile", None)
     result = {k: v for k, v in result.items() if k not in ("sampled_paths_cm", "sampled_path_fates")}
     result["sampled_paths_omitted"] = True
     verification = _slab_verification(config, result)
@@ -1095,9 +1118,11 @@ def _validate_slab_experiment(experiment):
     expected_warnings = (["no_histories"] if n == 0 else []) + (["collision_limit_reached"] if counts["collision_limit"] else []) + (["numerical_resolution_limit"] if counts["numeric_limit"] else [])
     expected_limits = ["abstract_nonreactive_model", "piecewise_constant_rates", "isotropic_scattering", "marginal_not_simultaneous_intervals"]
     if config.get("material_mode") == "reference":
-        from material import REFERENCE_WARNINGS, REFERENCE_LIMITATIONS
-        expected_warnings += list(REFERENCE_WARNINGS)
-        expected_limits += list(REFERENCE_LIMITATIONS)
+        from material import (material_from_dict, resolve_reference_profile, reference_result_notes)
+        profile = resolve_reference_profile([material_from_dict(d) for d in config["layers"]])
+        reference_warnings, reference_limits = reference_result_notes(profile)
+        expected_warnings += reference_warnings
+        expected_limits += reference_limits
     if result["warnings"] != expected_warnings or result["limitations"] != expected_limits:
         raise ValueError("warnings or limitations disagree with result")
     _object_fields(result["timing"], "timing", ("transport_seconds", "total_seconds"), ("transport_seconds", "total_seconds"))
@@ -1114,6 +1139,8 @@ def _validate_slab_experiment(experiment):
         backend="numba" if p["backend"] == "numba" else "python_numpy", **config["environment"])
     if config.get("material_mode") == "reference":
         expected_info["material_mode"] = "reference"
+        if config["schema_version"] == SLAB_CONFIGURATION_SCHEMA:
+            expected_info["reference_profile"] = config["reference_profile"]
     if _content_hash(info) != _content_hash(expected_info):
         raise ValueError("result configuration/environment mismatch")
     verification = _json_data(_slab_verification(config, result))
