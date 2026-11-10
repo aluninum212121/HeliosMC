@@ -262,7 +262,7 @@ class UnverifiedDataWarning(UserWarning):
 
 @dataclass(frozen=True)
 class AveragingConditions:
-    """Storage-only contract for a published average; never computes rates.
+    """Declared reduction or explicit point; never computes a spectral average.
 
     State/composition belong to the enclosing dataset. Weighting must identify
     the spectrum and normalization, not just say 'thermal' or 'one group'.
@@ -281,8 +281,10 @@ class AveragingConditions:
         if not isinstance(self.energy_bounds_ev, (tuple, list)) or len(self.energy_bounds_ev) != 2:
             raise ValueError("averaging requires two energy bounds in eV")
         lo, hi = (_nonnegative("energy bound", v) for v in self.energy_bounds_ev)
-        if lo >= hi:
+        if lo > hi or (lo == hi and self.method != "point_evaluation"):
             raise ValueError("averaging energy bounds must increase")
+        if self.method == "point_evaluation" and (lo != hi or lo <= 0):
+            raise ValueError("point_evaluation requires equal positive energy bounds")
         object.__setattr__(self, "energy_bounds_ev", (lo, hi))
         object.__setattr__(self, "assumptions", _notes("averaging assumptions", self.assumptions))
         if not self.assumptions:
@@ -337,6 +339,8 @@ class MaterialQuantity:
             if self.unit not in ("barn", "1", "cm", "1/cm", "g/cm^3", "g/mol"):
                 raise ValueError(f"{self.name}: unsupported unit {self.unit!r}; no implicit conversion")
             expected = _QUANTITY_UNITS.get(self.name)
+            if self.name.startswith(("sigma_a_", "sigma_s_")):
+                expected = "barn"
             if expected is not None and self.unit != expected:
                 raise ValueError(f"{self.name}: unit must be {expected}")
         if self.status != "available":
@@ -697,15 +701,19 @@ def get_builtin_dataset(material_key: str) -> MaterialDataset:
     )
 
 
-def resolve_medium_rates(dataset: MaterialDataset) -> tuple[float, float]:
+def resolve_medium_rates(dataset: MaterialDataset, *, mode="legacy") -> tuple[float, float]:
     """Abstract one-group attenuation/scattering rates in cm^-1, no reactions.
 
-    Only explicitly synthetic/educational datasets are admitted. Rates are
-    supplied directly, not inferred from nuclear cross sections or densities.
+    Default preserves the existing synthetic/educational contract. The explicit
+    reference mode admits only the audited point-data adapter below.
     Zero total rate is a valid vacuum. Each record describes one spatial layer.
     """
     if not isinstance(dataset, MaterialDataset):
         raise TypeError("each medium layer must be a MaterialDataset")
+    if mode == "reference":
+        return resolve_reference_rates(dataset)
+    if mode != "legacy":
+        raise ValueError("material mode must be legacy or reference")
     if dataset.data_kind not in ("synthetic", "educational"):
         raise ValueError("abstract scenarios require explicitly synthetic or educational data")
     dataset._require_compatible_kind()
@@ -1096,6 +1104,178 @@ def get_reference_dataset(material_key: str) -> MaterialDataset:
                 "Reference values do not replace historical transport parameters.")))
 
 
+REFERENCE_APPROXIMATION = "free_gas_point_isotropic_v1"
+REFERENCE_WARNINGS = ("reference_free_gas_fixed_energy_approximation",)
+REFERENCE_LIMITATIONS = ("no_bound_atom_thermal_scattering", "no_energy_evolution",
+                        "isotropic_laboratory_scattering_approximation",
+                        "source_parameter_uncertainty_not_propagated")
+
+# JAEA JENDL-5 HTML tables, 0.0253-eV column, processed at 300 K.
+# Each tuple is (Z, A, elastic MT2 in barn, capture MT102 in barn,
+# other disappearance MT107 in barn). Threshold channels are closed at this
+# point. O17(n,alpha) MUST be included; capture alone is not absorption.
+# These are transcriptions of numerical tables, not a claim to parsing ENDF.
+_JENDL_POINT = {
+    "H1": (1, 1, 30.27, .3326, 0.),
+    "H2": (1, 2, 4.246, 550.0e-6, 0.),
+    "O16": (8, 16, 3.986, 189.9e-6, 0.),
+    "O17": (8, 17, 3.615, 670.0e-6, 243.8e-3),
+    "O18": (8, 18, 3.532, 140.8e-6, 0.),
+    "C12": (6, 12, 4.950, 3.877e-3, 0.),
+    "C13": (6, 13, 5.557, 1.488e-3, 0.),
+}
+
+
+def _water_density_0p1mpa(temperature):
+    """IAPWS SR6-08(2011), Eq.2/Table1: density in g/cm^3 at 100000 Pa.
+
+    Only this specific-volume correlation is implemented. Its source-specific
+    R=461.51805 is part of the fitted formula, not replaced by a newer constant.
+    Published limits include metastable liquid; no phase inference is made.
+    """
+    t = _nonnegative("temperature", temperature)
+    if not 253.15 <= t <= 383.15:
+        raise ValueError("IAPWS correlation requires 253.15 <= temperature <= 383.15 K")
+    alpha, beta = 10. / (593. - t), 10. / (t - 232.)
+    a = (6.74458446e3, -2.22521604e5, 1.00231247e8, -1.63552118e9, 8.32299658e9)
+    b = (5.78545292e-3, -1.53195665e-2, 3.11337859e-2,
+         -4.23546241e-2, 3.38713507e-2, -1.19946761e-2)
+    v = 461.51805 * 10. / 100000. * (1.93763157e-2
+        + math.fsum(x * alpha**n for x, n in zip(a, (4, 5, 7, 8, 9)))
+        + math.fsum(x * beta**m for m, x in enumerate(b, 1)))
+    return 1. / v / 1000.
+
+
+def get_reference_transport_dataset(material_key, *, approximation,
+                                    density=None, density_origin=None) -> MaterialDataset:
+    """Explicit point-data closure for the existing NONREACTIVE slab model.
+
+    This is an acknowledged free-gas, fixed-energy, isotropic-LAB approximation,
+    not S(alpha,beta) water/graphite transport. No universal spectral average,
+    isotope inference, density fallback, or mapping to the multiplying kernel.
+    Graphite requires caller density AND lineage; it remains unverified input.
+    Nuclear source tables and printed unit prefixes were checked 2026-11-10.
+    """
+    if material_key not in ("Вода (H₂O)", "Графит"):
+        raise ValueError("reference transport unavailable: only water and graphite are defined; uranium presets remain legacy_unverified")
+    if approximation != REFERENCE_APPROXIMATION:
+        raise ValueError(f"explicit approximation={REFERENCE_APPROXIMATION!r} is required; bound-atom transport is unsupported")
+    base = get_reference_dataset(material_key)
+    water = material_key == "Вода (H₂O)"
+    scope = ("Point evaluation at 0.0253 eV, free-gas nuclear data processed at 300 K; not a spectral average.",
+             "Fixed-energy and isotropic laboratory scattering are educational closures; not evaluated angular/energy distributions.")
+    point = AveragingConditions("point_evaluation", "Dirac point at E=0.0253 eV; no energy integration",
+        (.0253, .0253), "https://wwwndc.jaea.go.jp/jendl/j5/elm/calc.html", scope)
+    composition_origin = DataOrigin(source_library="NIST NCNR / Neutron News",
+        library_version="Vol. 3 No. 3 (1992), pp. 29-37; NCNR HTML transcription",
+        source_url="https://www.ncnr.nist.gov/resources/n-lengths/list.html",
+        original_reference="Natural isotope abundances: H1 99.985%, H2 0.015%; O16 99.762%, O17 0.038%, O18 0.2%; C12 98.9%, C13 1.1%",
+        retrieval_date="2026-11-10", processing_description=(
+            "Representative published atom abundances divided by 100; water H amounts multiplied by 2. "
+            "Conventional WebBook molar mass retained, not isotope-exact mass or measured sample composition."))
+    composition = (("H1", 2*.99985), ("H2", 2*.00015), ("O16", .99762),
+                   ("O17", .00038), ("O18", .002)) if water else (("C12", .989), ("C13", .011))
+    molar = base.quantities[0]
+    if water:
+        if density is not None or density_origin is not None:
+            raise ValueError("water reference fixes density at 300 K and 100000 Pa; overrides are unsupported")
+        density_origin = replace(base.state.origin, retrieval_date="2026-11-10",
+            original_reference="IAPWS SR6-08(2011), Eq. (2), Table 1; Table 8 verification points",
+            processing_description="1/v(300 K,100000 Pa)/1000 from Eq.2 in material._water_density_0p1mpa; kg/m^3 to g/cm^3.")
+        density = _water_density_0p1mpa(300.)
+    else:
+        if density is None or not isinstance(density_origin, DataOrigin):
+            raise ValueError("graphite reference requires explicit density in g/cm^3 and density_origin (sample/grade and method); no universal density")
+        if density_origin.original_reference is None or density_origin.processing_description is None:
+            raise ValueError("graphite density_origin requires sample/grade reference and processing_description")
+        density = _nonnegative("density", density)
+        if density <= 0:
+            raise ValueError("reference material density must be positive")
+    density_q = MaterialQuantity("density", "g/cm^3", density,
+        data_kind="derived" if water else "reference", origin=density_origin,
+        applicability_notes=("300 K; 100000 Pa ordinary liquid water." if water else
+                             "Caller-specified graphite sample at 300 K; density is unverified user input.",))
+    nuclear = []
+    for nuclide, _ in composition:
+        z, a, elastic, capture, other = _JENDL_POINT[nuclide]
+        url = f"https://wwwndc.jaea.go.jp/jendl/j5/elm/Table/z{z:03d}/T{a}.html"
+        for channel, value in (("sigma_a", capture + other), ("sigma_s", elastic)):
+            origin = DataOrigin(source_library="JAEA JENDL-5 numerical summary tables",
+                library_version="JENDL-5 (2021); HTML point table snapshot checked 2026-11-10; raw-file update unpinned",
+                source_url=url, retrieval_date="2026-11-10",
+                original_reference=f"{nuclide}, 0.0253-eV column, " + ("MT102 + MT107 (O17 only)" if channel == "sigma_a" else "MT2"),
+                processing_description="Published barn/millibarn/microbarn values converted explicitly to barn; non-fission disappearance channels summed for absorption.",
+                processing_software="JAEA: LINEAR, RECENT, SIGMA1 (PREPRO)")
+            nuclear.append(MaterialQuantity(f"{channel}_{nuclide}", "barn", value,
+                data_kind="derived" if channel == "sigma_a" and other else "evaluated",
+                origin=origin, averaging=point, applicability_notes=scope))
+    aggregate_origin = DataOrigin(source_library="JAEA JENDL-5 + NIST NCNR composition",
+        library_version="HeliosMC point mixture v1", source_url="https://wwwndc.jaea.go.jp/jendl/j5/j5.html",
+        original_reference="Per-nuclide quantities and the enclosing dataset composition/origin",
+        retrieval_date="2026-11-10",
+        processing_description="sum(amount_i * sigma_x_i); amounts per H2O formula unit, or carbon atom fractions; no energy averaging.")
+    by_name = {q.name: q.values for q in nuclear}
+    aggregate = tuple(MaterialQuantity(channel, "barn",
+        math.fsum(amount * by_name[f"{channel}_{nuclide}"] for nuclide, amount in composition),
+        data_kind="derived", origin=aggregate_origin, averaging=point, applicability_notes=scope)
+        for channel in ("sigma_a", "sigma_s"))
+    limitations = scope + (
+        "No molecular binding, crystal structure, S(alpha,beta), thermal energy exchange, or physical moderation prediction.",
+        "Nuclear numbers are source-checked rounded HTML values; raw ENDF files/covariances and processing revision not verified.",
+        "Published channel sums do not exactly reproduce the separate MT1 table entries (H1: 30.6026 vs 30.63 barn); the model uses MT2 plus disappearance without rescaling.",
+        "Representative isotope proportions, ordinary-water density and conventional molar mass are a documented composition approximation, not a specimen assay.",
+        "Parameter uncertainty and model discrepancy are unknown and are not included in Monte Carlo standard errors.")
+    return MaterialDataset(
+        material_id="heliosmc:reference-transport-water" if water else "heliosmc:reference-transport-graphite",
+        name="Water point free-gas approximation" if water else "Graphite point free-gas approximation",
+        data_kind="reference", source="JENDL-5 point tables; NIST NCNR; NIST SRD69; IAPWS" if water else
+        "JENDL-5 point tables; NIST NCNR; NIST SRD69; caller graphite density", version=REFERENCE_APPROXIMATION,
+        provenance=("Numerical table columns and units opened/checked 2026-11-10; no ENDF/ACE/HDF5 library parsed.",
+                    "Explicit free-gas point closure for nonreactive slab only; no scientific validation claim."),
+        quantities=(molar, density_q, *nuclear, *aggregate), composition=composition,
+        composition_basis="stoichiometric" if water else "atom_fraction", temperature=300.,
+        chemical_formula=base.chemical_formula, material_category="compound" if water else "mixture",
+        state=MaterialState(density, physical_state="liquid" if water else "solid", origin=density_origin,
+                            temperature_range=(300., 300.), pressure=100000. if water else None),
+        origin=composition_origin, quality=DataQuality(validation_status="schema_validated",
+            verification_status="source_checked" if water else "unverified",
+            applicability_notes=scope, known_limitations=limitations + (() if water else
+                ("Graphite density is user supplied and not independently source-checked.",))))
+
+
+def _check_reference_transport_identity(dataset):
+    keys = {"heliosmc:reference-transport-water": "Вода (H₂O)",
+            "heliosmc:reference-transport-graphite": "Графит"}
+    if dataset.material_id not in keys:
+        raise ValueError("reference transport requires an audited point dataset; required nuclear data are missing or unsupported")
+    key = keys[dataset.material_id]
+    kwargs = {} if key == "Вода (H₂O)" else dict(density=dataset.state.density, density_origin=dataset.state.origin)
+    expected = get_reference_transport_dataset(key, approximation=REFERENCE_APPROXIMATION, **kwargs)
+    if material_to_dict(dataset) != material_to_dict(expected):
+        raise ValueError("reference transport identity/content mismatch: state, energy, composition, units or source values changed")
+
+
+def resolve_reference_rates(dataset: MaterialDataset) -> tuple[float, float]:
+    """Explicit N_i sigma_i mapping to slab cm^-1, outside Numba.
+
+    N_i = rho*N_A/M * amount_i; M is per formula unit for stoichiometry,
+    or per atom for atom fractions. 1 barn = 1e-24 cm^2. No mass fractions
+    are accepted by this reviewed adapter. No fission transport is enabled.
+    """
+    from scipy.constants import Avogadro
+    if not isinstance(dataset, MaterialDataset) or dataset.data_kind != "reference":
+        raise ValueError("reference mode requires reference datasets; mixing modes is forbidden")
+    _check_reference_transport_identity(dataset)
+    q = {q.name: q for q in dataset.quantities}
+    number_density = dataset.state.density * Avogadro / q["molar_mass"].values
+    rates = tuple(number_density * math.fsum(amount * q[f"{channel}_{nuclide}"].values
+                  for nuclide, amount in dataset.composition) * 1e-24
+                  for channel in ("sigma_a", "sigma_s"))
+    if not all(math.isfinite(x) and x >= 0 for x in rates) or not math.isfinite(sum(rates)) or sum(rates) <= 0:
+        raise ValueError("reference rates must have a positive finite total")
+    return rates
+
+
 def _json_data(value):
     """Explicit JSON types only; never serialize arbitrary Python objects."""
     if isinstance(value, np.ndarray):
@@ -1164,6 +1344,9 @@ def _load_archive(path, schema, *, expected_sha256=None):
 def _check_reference_identity(dataset):
     # Reserve these IDs against altered values, sources, statuses and conditions,
     # even if an editor recomputes the self-checksum. Other records remain declarations.
+    if dataset.material_id.startswith("heliosmc:reference-transport-"):
+        _check_reference_transport_identity(dataset)
+        return
     for key in ("Вода (H₂O)", "Графит"):
         reference = get_reference_dataset(key)
         if dataset.material_id == reference.material_id:

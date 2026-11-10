@@ -1553,3 +1553,267 @@ unknown graphite density/state and isotope fractions, limited ENDF source access
 no large dataset/training/failure-job registry, no native GUI verification and
 no measured ML computational payoff. None is concealed by a schema-valid or
 mathematical-test-passed label.
+
+## Reference Material Model (2026-11-10)
+
+This section supersedes the earlier storage-only restriction **for the explicit
+nonreactive slab adapter only**. Existing thermophysical references keep their
+identities/content. A separate executable record in the same MaterialDataset
+schema carries point nuclear inputs and a compulsory approximation declaration.
+No production module, dependency, GUI change, reactor mechanism, commit or push
+is part of this stage. The previously untracked research_demo directory was
+present at initial Git audit and was not modified.
+
+### Audit and integration contract
+
+AGENTS.md, Git status, material.py, physics.py, tests, source catalog, prior audit,
+research export/replay and GUI/worker/benchmark use sites were inspected first.
+
+| Existing input | Actual use and scientific status | Decision |
+| --- | --- | --- |
+| Material.sigma_f/a/s (barn), nu | Historical sphere reaction ratios and secondary count; sources/energy unknown | All four presets and semantics retained |
+| Material.density (g/cm^3), molar_mass (g/mol) | Historical number-density normalization with rounded 6.022e23 | Formula and numbers retained for legacy |
+| Material.mean_free_path(), macro_total() | Derived legacy length/rate, used by sphere flight sampler | Retained; not used by new reference adapter |
+| name/color | Identity and GUI | Retained |
+| Slab absorption_rate/scattering_rate (1/cm) | Explicit mathematical rates; no energy state | Default `material_mode="legacy"` preserves this contract |
+| Reference water/graphite thermophysical records | Formula/molar mass; water density at 298.15 K, graphite density missing | Retained, still insufficient to execute transport |
+| Energy/temperature/density metadata | Formerly storage only | Reference point adapter checks a specific 300 K state/energy/composition before calculating rates |
+| Geometry, seed, histories, limits, backend | Algorithm/source inputs, not material properties | Existing meaning retained; no data calibration |
+
+`get_reference_transport_dataset(key, approximation=REFERENCE_APPROXIMATION, ...)`
+returns a MaterialDataset. The required approximation is
+`free_gas_point_isotropic_v1`. Supported materials are conventional ordinary
+water at 300 K/100000 Pa and graphite at 300 K with caller density/lineage.
+These are fixed-energy/free-gas educational approximations, not full thermal
+material models. Uranium reference construction raises a diagnostic error:
+neither an isotope name nor 3.5% enrichment identifies a chemical form/state/
+complete isotopic composition. No uranium number or reaction mechanism changed.
+
+The calculation path is:
+
+`MaterialDataset -> create_slab_configuration(material_mode="reference") ->
+resolve_medium_rates(mode="reference") -> resolve_reference_rates -> float64
+absorption/scattering arrays -> unchanged _slab_batch -> statistics -> existing
+JSON/CSV/NPZ export/reload`.
+
+No reference object is sent to Numba. `MaterialDataset.get_transport_data()` and
+the multiplying sphere API continue to reject scientific datasets. Default slab
+calls keep the explicit-rate contract; they did not previously accept historical
+Material objects and do not acquire that interpretation. Reference/legacy layers
+cannot mix and there is no fallback. Modified values, sources, units, state,
+composition, point energy or reserved identity fail the adapter's canonical
+comparison. Custom scientific records require a separate reviewed adapter;
+merely writing an official URL does not authorize transport.
+
+For water the formula-unit number density is `rho*N_A/M`; each H isotope amount
+is twice its atom abundance, O amounts sum to one. For graphite the amounts are
+carbon atom fractions, summing to one. Each channel obeys
+`Sigma_x = (rho*N_A/M) * sum(amount_i*sigma_x_i) * 1e-24` cm^-1.
+`N_A` is scipy.constants.Avogadro, exactly 6.02214076e23 mol^-1;
+1 barn = 1e-24 cm^2. No mass fraction is interpreted as an atom fraction. This
+reviewed adapter admits its fixed stoichiometric/atom-fraction compositions;
+mass-fraction/custom-isotope conversions are deliberately unsupported.
+
+### Scientific Data Provenance
+
+The following are **numerical HTML table transcriptions actually opened on
+2026-11-10**, rather than numerical values inferred from a library homepage.
+All nuclear entries use a single evaluation family: JAEA JENDL-5, December 2021,
+published point summaries processed at 300 K with LINEAR/RECENT/SIGMA1 (PREPRO).
+The HTML does not pin processing-software version or raw-file errata revision;
+none is invented. No raw ENDF, ACE, HDF5 file, covariance or source checksum was
+checked. Local adapter revision is separate from this source identity.
+
+| Nuclide | MT2 elastic (barn) | Disappearance used as sigma_a (barn) | Numerical source / derivation |
+| --- | ---: | ---: | --- |
+| H1 | 30.27 | 0.3326 | [JAEA H1](https://wwwndc.jaea.go.jp/jendl/j5/elm/Table/z001/T1.html), MT102 |
+| H2 | 4.246 | 0.0005500 | [JAEA H2](https://wwwndc.jaea.go.jp/jendl/j5/elm/Table/z001/T2.html), 550.0 microbarn MT102 |
+| O16 | 3.986 | 0.0001899 | [JAEA O16](https://wwwndc.jaea.go.jp/jendl/j5/elm/Table/z008/T16.html), 189.9 microbarn MT102 |
+| O17 | 3.615 | 0.24447 | [JAEA O17](https://wwwndc.jaea.go.jp/jendl/j5/elm/Table/z008/T17.html), 670.0 microbarn MT102 + 243.8 millibarn MT107; capture alone is insufficient |
+| O18 | 3.532 | 0.0001408 | [JAEA O18](https://wwwndc.jaea.go.jp/jendl/j5/elm/Table/z008/T18.html), 140.8 microbarn MT102 |
+| C12 | 4.950 | 0.003877 | [JAEA C12](https://wwwndc.jaea.go.jp/jendl/j5/elm/Table/z006/T12.html), 3.877 millibarn MT102 |
+| C13 | 5.557 | 0.001488 | [JAEA C13](https://wwwndc.jaea.go.jp/jendl/j5/elm/Table/z006/T13.html), 1.488 millibarn MT102 |
+
+All entries refer to **0.0253 eV**, not the adjacent Maxwellian-average column.
+Source checking establishes transcription/scope; independent scientific
+validation is unestablished. Other listed reaction thresholds are above this
+energy. No artificial fission/nu constants are introduced for this adapter.
+
+| Material/property | Used value and units | Source, conditions and verification |
+| --- | --- | --- |
+| Representative isotope atom abundances | H1/H2: .99985/.00015; O16/O17/O18: .99762/.00038/.002; C12/C13: .989/.011 | [NIST NCNR table](https://www.ncnr.nist.gov/resources/n-lengths/list.html), Neutron News 3(3), 1992, pp.29-37; percentages explicitly divided by 100; numerical rows source-checked, not sample measurements |
+| Water conventional molar mass | 18.0153 g/mol | [NIST SRD69 Water](https://webbook.nist.gov/cgi/cbook.cgi?ID=C7732185&Mask=1), molecular-weight row rechecked |
+| Carbon conventional molar mass | 12.0107 g/mol | [NIST SRD69 Graphite](https://webbook.nist.gov/cgi/cbook.cgi?ID=C7782425&Units=SI), molecular-weight row rechecked |
+| Water density at 300 K/100000 Pa | 0.9965563072677796 g/cm^3 (derived numeric result) | [IAPWS SR6-08(2011)](https://iapws.org/technical-guidance/release/LiquidWater.download), Eq.2/Eq.4/Table1; only specific-volume correlation implemented and checked against all Table8 density points |
+| Graphite density | Required user input, no universal value | DataOrigin must identify sample/grade and acquisition/method at 300 K. Always unverified user input; no source status inferred from a supplied URL |
+| Water derived Sigma_a / Sigma_s | 0.022165776780709006 / 2.149247245558249 cm^-1 | Explicit formula above and individually archived source inputs; model coefficients at this point/state, not measured water attenuation |
+
+IAPWS formula constants and coefficients retain their published values, including
+the correlation-specific R=461.51805 J/(kg K), TR=10 K, Ta=593 K, Tb=232 K and
+p0=100000 Pa. The implemented equation is
+`v = R*TR/p0 * (a5 + sum(a_i*alpha**n_i, i=6..10) +
+sum(b_i*beta**m_i, i=5..10))`, `alpha=TR/(Ta-T)`, `beta=TR/(T-Tb)`;
+`rho(g/cm^3)=1/v/1000`. Bounds are 253.15..383.15 K and include metastable liquid;
+the factory fixes stable liquid 300 K. Source density uncertainty has coverage
+factor k=2; it is not silently converted to a one-sigma input uncertainty.
+The old 298.15 K reference remains unchanged instead of being attached to 300 K
+nuclear inputs. Conventional masses and representative isotope abundances are
+a declared approximation, not isotope-exact sample masses/composition. IAPWS
+ordinary-water state is likewise not a measured assay of that isotope mixture.
+
+ENDF/B-VIII.1's requested [landing page](https://www.nndc.bnl.gov/endf-library/)
+was accessible this time; [JEFF-4.0](https://databank.io.oecd-nea.org/data/jeff/40/)
+and [JENDL overview/errata](https://wwwndc.jaea.go.jp/jendl/j5/JENDL-5_Errata.html)
+were opened. ENDF/B and JEFF numerical evaluations were not processed; their
+landing pages supply no adapter number. JENDL was selected for its accessible
+official numerical point summaries. An attempted NIST fluid-service query could
+not be opened and supplies no value. The catalog records these distinctions.
+
+### Approximations and Limitations
+
+No spectral weighting function is inferred. The supported reduction is
+`point_evaluation` at E0=.0253 eV: the Dirac point notation identifies a point
+evaluation, with no finite-range integral performed. In AveragingConditions,
+equal positive endpoints are permitted only for this method. For an actual
+group mean, `integral(sigma*w)/integral(w)` still requires a nonzero normalized
+weight and explicit domain. Neither arithmetic energy-point averaging nor the
+JAEA Maxwellian column is substituted. The [calculation-details page](https://wwwndc.jaea.go.jp/jendl/j5/elm/calc.html)
+uses a MACS normalization that must not be confused with an arbitrary normalized
+flux-group average. No broad-spectrum or multigroup support is claimed.
+
+The unchanged solver performs exponential flights, disappearance and isotropic
+laboratory scattering at frozen coefficients. It does not evolve energy, model
+moderation, sample evaluated angle-energy laws, follow thermal target velocities,
+or implement molecular/crystal S(alpha,beta). [OpenMC Neutron Physics](https://docs.openmc.org/en/latest/methods/neutron_physics.html)
+explains why binding/crystalline effects affect thermal scattering. Free-gas
+point values do not become real-water/graphite cross sections through density
+conversion. The opt-in approximation records this model discrepancy in every
+result. No bound scattering numbers from the NIST table are misused as free-gas
+material scattering. There is no physical calibration of the kernel.
+
+The separate published MT1 summaries do not fully reconcile with MT2 plus
+disappearance: H1 gives 30.63 vs 30.6026 barn. The discrepancy is not silently
+called rounding, resolved by changing a channel, or used to rescale rates. The
+adapter documents and uses the selected channel summaries consistently. Their
+limited precision, unpinned processing revision and missing covariances limit
+interpretation. MC SE/CI quantify sampling alone; parameter uncertainties and
+model discrepancy remain unknown. Unit tests do not validate a real specimen.
+
+### Export, reproducibility and ML
+
+New configuration schema is `heliosmc.slab-configuration.v2`; it explicitly
+stores material_mode (`legacy`/`reference`) and material_model_version
+(`explicit_rates_v1`/`free_gas_point_isotropic_v1`). The unchanged v1 experiment
+envelope/CSV/NPZ layout can carry either configuration version; strict readers
+accept old v1 configurations without silently rewriting them. Material schema
+v2 is retained. Every reference layer includes original microscopic numbers,
+units, isotope basis/amounts, T/P/density, origins/processing, point definition,
+quality and limitations. Derived rate arrays are recomputed and cross-checked
+against numeric NPZ members. Seed/PCG64, source, geometry, limits, model/kernel
+version, code hashes, environment, counts and MC uncertainty retain the previous
+export contract. Checksums, reserved-identity checks and safe NPZ loading remain.
+Exact replay still requires the archived source revision/environment; a schema
+upgrade does not waive that guard.
+
+Features remain the pre-run rate/geometry/source/population/limit whitelist.
+Targets/uncertainties/verification remain separate. Material mode/model version,
+parameter verification and unestablished scientific validation are metadata.
+Same-rate/geometry/source repeats, including different seeds or sample counts,
+share a group and cannot split across train/test via split_slab_groups.
+Reference scattering experiments can be exported for later scoped studies but
+are not automatically eligible for the existing analytically certified training
+subset. User-density graphite is visibly unverified; neither it nor legacy
+uranium can be mistaken for a validated training oracle. A surrogate could
+approximate this educational solver, subject to an explicit future statistical
+verification protocol; real-material predictive accuracy is unestablished.
+No dataset corpus, training or ML framework was added.
+
+### Validation Results
+
+Predeclared independent first-flight test: at width .3 cm, source mu=1, N=5000
+and zero collision budget, ballistic escape probability is
+`exp(-(.022165776780709006+2.149247245558249)*.3)` = .521302961256.
+Each of five fixed independent seeds and their pooled sample must have two-sided
+exact binomial p >= 1e-6. Histories reaching an unexecuted collision remain
+censored; their full-outcome estimates remain unavailable.
+
+| Seed | Ballistic right escapes / 5000 | Two-sided p-value |
+| --- | ---: | ---: |
+| 101 | 2615 | .820831104299 |
+| 202 | 2618 | .755492790451 |
+| 303 | 2582 | .487978346435 |
+| 404 | 2602 | .898638190427 |
+| 505 | 2583 | .505909633950 |
+
+Pooled 13000/25000 has p=.680732943885. No seed/criterion was selected after
+observing results. These tests check flights using the reference-derived rate;
+they do not compare multiple-scattering water/graphite with an experiment.
+IAPWS density independently matches printed Table8 points at 260/298.15/375 K
+within 5e-7 kg/m^3; conversion, isotope stoichiometry, O17 alpha absorption,
+point/state mismatch, missing data, forbidden mode mixtures, reserved-ID forgery,
+graphite density scaling, warning/uncertainty integrity and feature separation
+are covered. Completed reference exports at seeds 701/702 roundtrip exactly and
+replay the same counts/SE/CI; JSON/CSV/NPZ values and group IDs agree. A v1
+configuration roundtrip also passes the same public reader.
+
+AST comparisons with starting HEAD confirm Material, TransportData, MATERIALS,
+_slab_batch, _transport_batch, run_generation_batch and estimate_k_full unchanged.
+A prior default slab call at seed42/N600 (.4/.6 per cm, width2) reproduced all
+outputs/trajectories except timing: absorbed366, left96, right138, unfinished0.
+Reference and direct-rate inputs give identical kernel outcomes/paths; Python
+and Numba outcomes/uncertainties agree. GUI/worker/monolith files are untouched.
+
+The first focused run passed 168 tests. A subsequent full run found one catalog
+test still asserting the previous five-source count (269 passed, one failure,
+two subtests passed); it was corrected to check the eight explicit source IDs
+and registration growth. No physical expected number or statistical criterion
+was changed. Final full-suite evidence is recorded after execution below.
+
+The README example was additionally executed in an automatically cleaned external
+temporary directory: water, width .2 cm, 1000 histories, seed701, Python backend;
+absorbed6, left186, right808, no unfinished histories. Right-exit estimate .808,
+SE .01245536029185828 and marginal 95% CI
+[.7821951822437158, .8319766825284644] survive exact JSON/CSV/NPZ roundtrip and
+replay. Material-reference export/reload also preserves all fields. These data
+are demonstration outputs for the stated closure, not experimental observations.
+No extra persistent bundle was created. The pre-existing original v1 demo
+archive was also actually opened with its independently recorded SHA-256:
+`6edd3cd434b3df73ee78e9155705dd9a5c2a276129488d305ea322f44de2943c`.
+Its configuration/seed123/counts(2597 absorbed,1403 right) and both original
+thermophysical reference files loaded successfully without conversion.
+
+Final executed checks (same installed Python 3.14.4, NumPy 2.4.4, SciPy 1.18.1,
+Numba 0.67.0, pytest 9.1.1; Windows):
+
+| Check | Observed result |
+| --- | --- |
+| Initial focused material/math suite | 168 passed, 20.97 s |
+| Initial full Numba suite, before catalog assertion update | 269 passed, 1 catalog-count assertion failed, 2 subtests passed, 49.33 s |
+| Initial full fallback suite, imported before that update | Same catalog-count assertion only; 269 passed, 2 subtests passed, 296.04 s |
+| Final full suite, Numba available | **270 passed, 2 subtests passed**, 58.85 s |
+| Final full suite, Numba disabled before all application/test imports | **270 passed, 2 subtests passed**, 322.47 s |
+| AST/default-result compatibility, original v1 archive load, export demonstration | Passed, details above |
+| git diff --check | Passed |
+
+Suites ran via the existing installed interpreter, `pytest -q -p no:cacheprovider
+--basetemp <external temporary directory>`, with bytecode writes disabled. Each
+temporary directory was cleaned by TemporaryDirectory after the process. The
+fallback sets `sys.modules['numba']=None` before importing pytest/application;
+the new reference tests also explicitly compare Python/Numba when available.
+No tests were skipped or old physical reference results changed. Existing Agg
+GUI rendering/worker lifecycle checks passed; native interactive Tk was not
+manually exercised. These elapsed times are test evidence, not benchmarks.
+
+Changed files: material.py (point adapter and units), physics.py (explicit mode
+routing and versioned archive metadata), tests/test_material_data.py,
+tests/test_educational_math.py, docs/data_sources.json, README.md and this audit.
+Created/deleted files or production modules: none. Dependencies installed/added:
+none. Existing unrelated/untracked demo files preserved. No commit/push.
+
+Remaining unsupported work: physical S(alpha,beta) water/graphite transport,
+energy redistribution/evaluated angular kernels, spectrum-weighted group
+processing with a justified incident spectrum, independent raw-file/covariance
+checks, specimen-specific composition/density validation, and statistically
+qualified reference-surrogate training targets. These limitations do not prevent
+the implemented point-data coefficients from being used and archived by the
+current educational calculation; they limit its physical interpretation.

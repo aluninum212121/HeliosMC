@@ -1,4 +1,4 @@
-"""Software checks on invented data; no real nuclear-data files or validation."""
+"""Schema/adapter checks; source transcription tests are not physics validation."""
 
 import copy
 import hashlib
@@ -311,7 +311,9 @@ def test_offline_catalog_and_explicit_registration(tmp_path, monkeypatch):
     import socket
     monkeypatch.setattr(socket, "create_connection", lambda *a, **kw: pytest.fail("network used"))
     catalog = load_source_catalog()
-    assert len(catalog) == 5
+    assert set(catalog) == {"endfb-viii.1", "jeff-4.0", "jendl-5", "openmc-endfb-viii.1-njoy2016.78",
+        "exfor", "nist-ncnr-isotope-abundances-1992", "nist-srd69-reference-molar-masses", "iapws-sr6-08-2011-density"}
+    original_size = len(catalog)
     for library in catalog.values():
         assert library.availability_status == "known_source" and library.local_files == ()
         assert library.source_url.startswith("https://")
@@ -322,7 +324,7 @@ def test_offline_catalog_and_explicit_registration(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match="duplicate"):
         register_library(catalog, first)
     register_library(catalog, replace(first, library_id="fixture:registration", version="fixture-version"))
-    assert len(catalog) == 6
+    assert len(catalog) == original_size + 1
     path = tmp_path / "catalog.json"
     document = {"schema_version": SOURCE_CATALOG_SCHEMA, "libraries": []}
     path.write_text(json.dumps(document), encoding="utf-8")
@@ -498,3 +500,112 @@ def test_averaged_scientific_values_require_explicit_scope():
     dataset = replace(dataset, composition=(("X", 1.),), composition_basis="atom_fraction", temperature=300.,
                       quantities=(replace(dataset.quantities[0], averaging=checked),), quality=review)
     assert dataset.require_scientific_reference() is dataset  # Declaration only; no physical data used.
+
+
+@pytest.mark.parametrize("temperature,kg_m3", [(260., 997.068360), (298.15, 997.047013), (375., 957.009710)])
+def test_iapws_density_against_published_independent_check_points(temperature, kg_m3):
+    from material import _water_density_0p1mpa
+    # Table 8 printed resolution, fixed independently of implementation.
+    assert 1000 * _water_density_0p1mpa(temperature) == pytest.approx(kg_m3, abs=5e-7, rel=0)
+
+
+@pytest.mark.parametrize("temperature", [250., 400., True, np.inf, "300"])
+def test_iapws_outside_contract_rejected(temperature):
+    from material import _water_density_0p1mpa
+    with pytest.raises((ValueError, TypeError)):
+        _water_density_0p1mpa(temperature)
+
+
+def reference_water():
+    from material import get_reference_transport_dataset, REFERENCE_APPROXIMATION
+    return get_reference_transport_dataset("Вода (H₂O)", approximation=REFERENCE_APPROXIMATION)
+
+
+def test_reference_number_density_units_and_stoichiometry():
+    from scipy.constants import Avogadro
+    from material import resolve_reference_rates
+    d = reference_water()
+    q = {q.name: q for q in d.quantities}
+    assert d.temperature == 300. and d.state.pressure == 100000.
+    assert dict(d.composition) == {"H1": 1.9997, "H2": .0003, "O16": .99762, "O17": .00038, "O18": .002}
+    # Independent transcription of the opened JAEA point columns; includes O17(n,alpha).
+    sigma_a = 2*(.99985*.3326 + .00015*.0005500) + .99762*.0001899 + .00038*(.0006700+.2438) + .002*.0001408
+    sigma_s = 2*(.99985*30.27 + .00015*4.246) + .99762*3.986 + .00038*3.615 + .002*3.532
+    factor = d.state.density / 18.0153 * Avogadro * 1e-24
+    np.testing.assert_allclose(resolve_reference_rates(d), factor*np.array([sigma_a, sigma_s]), rtol=2e-15)
+    assert q["sigma_a_O17"].values == pytest.approx(.24447)
+    assert q["sigma_a_H2"].values == .00055
+    assert q["sigma_a"].averaging.energy_bounds_ev == (.0253, .0253)
+    assert q["sigma_a"].averaging.method == "point_evaluation"
+    assert q["sigma_a"].averaging.independent_verification == "unverified"
+    assert all(q.origin.source_url and q.origin.retrieval_date for q in d.quantities)
+    with pytest.raises(ValueError, match="storage-only"):
+        d.get_transport_data()  # No path into the multiplying legacy engine.
+
+
+def test_reference_graphite_explicit_density_and_atom_fraction_contract():
+    from material import get_reference_transport_dataset, resolve_reference_rates, REFERENCE_APPROXIMATION
+    from scipy.constants import Avogadro
+    kwargs = dict(approximation=REFERENCE_APPROXIMATION)
+    with pytest.raises(ValueError, match="requires explicit density"):
+        get_reference_transport_dataset("Графит", **kwargs)
+    origin = DataOrigin(original_reference="Invented sample G for software testing only",
+        processing_description="User input 1.6 g/cm^3, 300 K; no measured material claimed")
+    a = get_reference_transport_dataset("Графит", density=1.6, density_origin=origin, **kwargs)
+    b = get_reference_transport_dataset("Графит", density=2.0, density_origin=origin, **kwargs)
+    factor = 1.6 * Avogadro / 12.0107 * 1e-24
+    np.testing.assert_allclose(resolve_reference_rates(a), factor*np.array([.989*.003877+.011*.001488, .989*4.950+.011*5.557]))
+    np.testing.assert_allclose(resolve_reference_rates(b), np.array(resolve_reference_rates(a))*1.25)
+    assert a.composition_basis == "atom_fraction" and sum(v for _, v in a.composition) == 1.
+    assert a.quality.verification_status == "unverified"
+
+
+@pytest.mark.parametrize("change", ["temperature", "energy", "composition", "mass_fraction", "source", "missing", "density", "id", "status"])
+def test_reference_adapter_rejects_inconsistent_or_forged_inputs(change):
+    from material import resolve_reference_rates
+    d = reference_water()
+    if change == "temperature": d = replace(d, temperature=301., state=replace(d.state, temperature_range=(300., 301.)))
+    if change == "energy":
+        d = replace(d, quantities=tuple(replace(q, averaging=replace(q.averaging, energy_bounds_ev=(.1,.1))) if q.averaging else q for q in d.quantities))
+    if change == "composition": d = replace(d, composition=(("H1", 2.), ("O16", 1.)))
+    if change == "mass_fraction": d = replace(d, composition=(("H1", .5), ("O16", .5)), composition_basis="mass_fraction")
+    if change == "source": d = replace(d, origin=replace(d.origin, source_url="https://example.org/forged"))
+    if change == "missing": d = replace(d, quantities=tuple(replace(q, status="missing", values=None) if q.name == "sigma_s_H1" else q for q in d.quantities))
+    if change == "density":
+        d = replace(d, state=replace(d.state, density=1.), quantities=tuple(replace(q, values=1.) if q.name == "density" else q for q in d.quantities))
+    if change == "id": d = replace(d, material_id="custom:forged")
+    if change == "status": d = replace(d, quality=replace(d.quality, verification_status="unverified"))
+    with pytest.raises(ValueError, match="reference transport"):
+        resolve_reference_rates(d)
+
+
+def test_reference_roundtrip_and_mode_isolation(tmp_path):
+    from material import (get_reference_transport_dataset, get_reference_dataset, REFERENCE_APPROXIMATION,
+        export_material_reference, load_material_reference, material_to_dict, resolve_reference_rates)
+    d = reference_water()
+    digest = export_material_reference(d, tmp_path / "reference.json")
+    restored = load_material_reference(tmp_path / "reference.json", expected_sha256=digest)
+    assert material_to_dict(d) == material_to_dict(restored)
+    assert resolve_medium_rates(restored, mode="reference") == resolve_reference_rates(d)
+    for key in ("U-235 (чистый)", "U-235 (3.5%)"):
+        with pytest.raises(ValueError, match="legacy_unverified"):
+            get_reference_transport_dataset(key, approximation=REFERENCE_APPROXIMATION)
+    with pytest.raises(ValueError, match="bound-atom"):
+        get_reference_transport_dataset("Вода (H₂O)", approximation="bound_atom")
+    with pytest.raises(ValueError): resolve_medium_rates(d)
+    with pytest.raises(ValueError): resolve_medium_rates(abstract_dataset(), mode="reference")
+    with pytest.raises(ValueError): resolve_medium_rates(get_reference_dataset("Вода (H₂O)"), mode="reference")
+    with pytest.raises(ValueError): resolve_medium_rates(abstract_dataset(), mode="automatic")
+    with pytest.raises(ValueError, match="unit must be barn"):
+        MaterialQuantity("sigma_a_H1", "1/cm", .1)
+
+
+def test_reserved_reference_transport_export_rejects_rehashed_tampering(tmp_path):
+    from material import export_material_reference, load_material_reference, _content_hash
+    export_material_reference(reference_water(), tmp_path / "ref.json")
+    raw = json.loads((tmp_path / "ref.json").read_text(encoding="utf-8"))
+    raw["payload"]["quantities"][-1]["values"] = 100.
+    raw["content_sha256"] = _content_hash({k:v for k,v in raw.items() if k != "content_sha256"})
+    (tmp_path / "ref.json").write_text(json.dumps(raw), encoding="utf-8")
+    with pytest.raises(ValueError, match="reference transport identity"):
+        load_material_reference(tmp_path / "ref.json")

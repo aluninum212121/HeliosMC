@@ -49,8 +49,9 @@ review scope (`DataQuality`) and optional source-parameter standard uncertainty
 (`ParameterUncertainty`). Unknown values remain `None`. Historical preset numbers
 and `TransportData` are preserved. `require_scientific_reference()` warns and
 rejects unverified records; a declared review is not an automated scientific proof.
-Experimental/evaluated/derived datasets are storage-only, including one-group
-records: no reviewed scientific-data mapping to the old kernel is implemented.
+The legacy multiplication kernel keeps scientific datasets storage-only,
+including one-group records. The explicit nonreactive reference adapter below
+has its own narrower contract.
 
 `load_source_catalog()` reads the offline [official-source registry](docs/data_sources.json).
 It performs no downloads. `inspect_local_file()` computes a local SHA-256; integrity
@@ -65,7 +66,7 @@ for the file contract, source-access limitations, format comparison and Dataset 
 ## Verified educational scenarios
 
 The nonreactive `physics.simulate_slab` API models independent random flights
-through one or more abstract layers. Each layer is an explicitly synthetic or
+through one or more abstract layers. By default each layer is an explicitly synthetic or
 educational `MaterialDataset` with only `absorption_rate` and `scattering_rate`
 (both in `1/cm`); spatial interfaces are supplied separately in cm. There are no
 nuclear reactions or particle multiplication in this path. Existing GUI behavior
@@ -114,7 +115,8 @@ model or a real specimen was scientifically validated. All four historical
 The v2 schema adds pressure metadata, a separate source verification status,
 `not_applicable` for energy-independent reference properties, and an optional
 `AveragingConditions` contract. Unknown averaging cannot establish a validated
-one-group nuclear parameter. No scientific reference record enters either kernel.
+one-group nuclear parameter. These thermophysical-only records remain separate
+from executable point-data records described below.
 
 ```python
 from material import get_reference_dataset, export_material_reference, load_material_reference
@@ -151,6 +153,49 @@ The audit records one executed small example, its observed uncertainty, and
 the reproducible export/reload contract. Its 95% interval missed the analytic
 value in that run; the fixed alpha=1e-6 regression criterion passed. No seed
 selection or after-the-fact tolerance adjustment was used.
+
+## Explicit reference transport (2026-11-10)
+
+The nonreactive slab now accepts `material_mode="reference"`. Its reviewed
+adapter uses **JENDL-5 numerical point tables at 0.0253 eV, processed at 300 K**,
+representative NIST isotope proportions and `Sigma=sum(N_i*sigma_i)` in cm^-1.
+These are point values, with no broad-spectrum averaging. The user must select
+the `free_gas_point_isotropic_v1` approximation: the kernel still freezes energy
+and scatters isotropically in the laboratory. Real water/graphite thermal
+scattering requires bound-state data; this mode does not predict moderation.
+
+```python
+from material import get_reference_transport_dataset, REFERENCE_APPROXIMATION
+from physics import (create_slab_configuration, run_slab_experiment,
+                     export_slab_experiment, load_slab_experiment)
+
+water = get_reference_transport_dataset("Вода (H₂O)",
+    approximation=REFERENCE_APPROXIMATION)  # 300 K, 100000 Pa, IAPWS density
+config = create_slab_configuration("water-point-example", [water], [0., .2],
+    n_histories=1000, seed=701, material_mode="reference", backend="python")
+experiment = run_slab_experiment(config)
+digest = export_slab_experiment(experiment, "water-point-example")  # new directory
+restored = load_slab_experiment("water-point-example", expected_sha256=digest)
+assert restored == experiment  # parameters, sources, seed, SE and CI preserved
+replay = run_slab_experiment(restored["configuration"])
+assert replay["result"]["outcome_counts"] == restored["result"]["outcome_counts"]
+```
+
+Graphite requires explicit `density` in g/cm^3 and a `density_origin=DataOrigin(...)`
+describing sample/grade, temperature and acquisition method. This input retains
+unverified status. No density or uranium reference configuration is guessed.
+`get_reference_dataset()` retains the earlier thermophysical-only records.
+Mixing reference and explicit-rate layers raises an error. Calls without the
+new keyword preserve their original behavior; historical `MATERIALS` and
+multiplication APIs retain their data and algorithms.
+
+New configurations use v2 with material mode/model version; v1 archives remain
+readable through the same JSON/CSV/NPZ reader. Code/environment hashes still
+guard exact replay. Reference runs carry explicit approximation warnings and
+are excluded from the current mathematically certified training subset.
+Their source checks do not establish real-material scientific validation.
+The [current audit](docs/ARCHITECTURE_AUDIT.md#reference-material-model-2026-11-10)
+contains every used isotope value, its source, assumptions and test evidence.
 
 ## Tests
 

@@ -736,7 +736,8 @@ def _slab_batch(edges, absorption, scattering, n, max_collisions, rng,
 def simulate_slab(layers, edges_cm, n_histories=10000, *, seed=None,
                   max_collisions=1000, max_samples=0, batch_size=4096,
                   source_x=0., source_mu=1., confidence=.95, backend="auto",
-                  cancel_event=None, max_memory_bytes=DEFAULT_MAX_MEMORY_BYTES):
+                  cancel_event=None, max_memory_bytes=DEFAULT_MAX_MEMORY_BYTES,
+                  material_mode="legacy"):
     """Nonbranching random flights in an abstract piecewise-constant slab.
 
     Layers use explicit absorption_rate/scattering_rate in cm^-1. No nuclear
@@ -745,6 +746,9 @@ def simulate_slab(layers, edges_cm, n_histories=10000, *, seed=None,
     budget censors unresolved histories; it does not prevent ballistic escape.
     Memory is O(layers + samples*(max_collisions+2)), independent of population.
     Cancellation is cooperative between batches and raises without partial output.
+    material_mode='legacy' preserves the original explicit-rate contract.
+    'reference' explicitly derives rates from audited fixed-energy free-gas data;
+    it adds no bound-state physics or energy tracking to the kernel.
     """
     import scipy
 
@@ -775,7 +779,7 @@ def simulate_slab(layers, edges_cm, n_histories=10000, *, seed=None,
         _integer("max_memory_bytes", max_memory_bytes)
         if required > max_memory_bytes:
             raise MemoryError(f"Slab storage estimate {required} exceeds max_memory_bytes={max_memory_bytes}")
-    rates = np.array([resolve_medium_rates(layer) for layer in layers], dtype=np.float64)
+    rates = np.array([resolve_medium_rates(layer, mode=material_mode) for layer in layers], dtype=np.float64)
     raw_edges = np.asanyarray(edges_cm)
     if np.ma.isMaskedArray(raw_edges) or raw_edges.dtype.kind not in "iuf":
         raise ValueError("edges_cm must contain real numeric values without masks")
@@ -836,12 +840,18 @@ def simulate_slab(layers, edges_cm, n_histories=10000, *, seed=None,
             numpy_version=np.__version__, scipy_version=scipy.__version__,
             numba_version=getattr(sys.modules.get("numba"), "__version__", None) if use_numba else None))
     result["timing"]["total_seconds"] = perf_counter() - started
+    if material_mode == "reference":
+        from material import REFERENCE_WARNINGS, REFERENCE_LIMITATIONS
+        result["warnings"].extend(REFERENCE_WARNINGS)
+        result["limitations"].extend(REFERENCE_LIMITATIONS)
+        result["run_info"]["material_mode"] = "reference"
     return result
 
 
 # Research I/O stays outside both transport kernels. No new reaction model.
 SLAB_EXPORT_SCHEMA = "heliosmc.slab-experiment.v1"
-SLAB_CONFIGURATION_SCHEMA = "heliosmc.slab-configuration.v1"
+SLAB_CONFIGURATION_SCHEMA = "heliosmc.slab-configuration.v2"
+_SLAB_CONFIGURATION_V1 = "heliosmc.slab-configuration.v1"
 _SLAB_OUTCOMES = ("absorbed", "escaped_left", "escaped_right", "collision_limit", "numeric_limit")
 
 
@@ -856,7 +866,7 @@ def _slab_features(config):
     """Whitelist inputs; no statistics, timing, seed or provenance text in X."""
     from material import material_from_dict
     p = config["parameters"]
-    return dict(rates_per_cm=[list(resolve_medium_rates(material_from_dict(d))) for d in config["layers"]],
+    return dict(rates_per_cm=[list(resolve_medium_rates(material_from_dict(d), mode=config.get("material_mode", "legacy"))) for d in config["layers"]],
         edges_cm=p["edges_cm"], source_x_cm=p["source_x"], source_mu=p["source_mu"],
         n_histories=p["n_histories"], max_collisions=p["max_collisions"])
 
@@ -871,14 +881,14 @@ def _slab_group_id(config):
 
 
 def create_slab_configuration(scenario_id, layers, edges_cm, n_histories=10000, *,
-                              verification="none", **options):
+                              verification="none", material_mode="legacy", **options):
     """Validate and freeze inputs BEFORE running; choose verification in advance.
 
     Supported options are simulate_slab keyword inputs except cancellation.
     None seed is resolved now and archived. A zero-history validation call uses
     the existing public checks without executing a transport history.
     """
-    from material import MATERIAL_SCHEMA, _text, _json_data, _content_hash
+    from material import MATERIAL_SCHEMA, REFERENCE_APPROXIMATION, _text, _json_data, _content_hash
     _text("scenario_id", scenario_id)
     _integer("n_histories", n_histories)
     if n_histories > np.iinfo(np.int64).max:
@@ -888,14 +898,16 @@ def create_slab_configuration(scenario_id, layers, edges_cm, n_histories=10000, 
         raise ValueError("unsupported configuration option")
     if verification not in ("none", "pure_absorption_v1"):
         raise ValueError("unsupported verification problem")
-    if verification == "pure_absorption_v1" and any(resolve_medium_rates(d)[1] != 0 for d in layers):
+    if verification == "pure_absorption_v1" and any(resolve_medium_rates(d, mode=material_mode)[1] != 0 for d in layers):
         raise ValueError("pure absorption verification requires zero scattering")
-    info = simulate_slab(layers, edges_cm, n_histories=0, **options)["run_info"]
+    info = simulate_slab(layers, edges_cm, n_histories=0, material_mode=material_mode, **options)["run_info"]
     parameters = dict(edges_cm=info["edges_cm"], n_histories=int(n_histories), seed=info["effective_seed"],
         max_collisions=info["max_collisions"], max_samples=info["max_samples"], batch_size=info["batch_size"],
         source_x=info["source_x_cm"], source_mu=info["source_mu"], confidence=info["confidence"],
         backend="numba" if info["backend"] == "numba" else "python", max_memory_bytes=info["max_memory_bytes"])
     config = dict(schema_version=SLAB_CONFIGURATION_SCHEMA, material_schema_version=MATERIAL_SCHEMA,
+        material_mode=material_mode,
+        material_model_version=REFERENCE_APPROXIMATION if material_mode == "reference" else "explicit_rates_v1",
         scenario_id=scenario_id, algorithm_version="abstract_slab_v1", code_sha256=_research_code_hashes(),
         environment={k: info[k] for k in ("python_version", "numpy_version", "scipy_version", "numba_version")},
         rng="PCG64", requested_seed=info["seed"], parameters=parameters, layers=_json_data(info["layers"]),
@@ -910,14 +922,22 @@ def create_slab_configuration(scenario_id, layers, edges_cm, n_histories=10000, 
 
 
 def _validate_slab_configuration(config, *, replay=False):
-    from material import MATERIAL_SCHEMA, material_from_dict, _object_fields, _content_hash, _sha256, _text
+    from material import MATERIAL_SCHEMA, REFERENCE_APPROXIMATION, material_from_dict, _object_fields, _content_hash, _sha256, _text
     names = ("schema_version", "material_schema_version", "scenario_id", "algorithm_version", "code_sha256",
              "environment", "rng", "requested_seed", "parameters", "layers", "verification_protocol",
              "group_id", "configuration_id")
+    if isinstance(config, dict) and config.get("schema_version") == SLAB_CONFIGURATION_SCHEMA:
+        names += ("material_mode", "material_model_version")
     _object_fields(config, "configuration", names, names)
-    if (config["schema_version"] != SLAB_CONFIGURATION_SCHEMA or config["material_schema_version"] != MATERIAL_SCHEMA
+    if (config["schema_version"] not in (SLAB_CONFIGURATION_SCHEMA, _SLAB_CONFIGURATION_V1) or config["material_schema_version"] != MATERIAL_SCHEMA
             or config["algorithm_version"] != "abstract_slab_v1" or config["rng"] != "PCG64"):
         raise ValueError("unsupported configuration version or RNG")
+    mode = config.get("material_mode", "legacy")
+    if mode not in ("legacy", "reference"):
+        raise ValueError("material_mode must be legacy or reference")
+    if "material_model_version" in config and config["material_model_version"] != (
+            REFERENCE_APPROXIMATION if mode == "reference" else "explicit_rates_v1"):
+        raise ValueError("unsupported material model version")
     _text("scenario_id", config["scenario_id"])
     _sha256(config["configuration_id"])
     if _content_hash({k: v for k, v in config.items() if k != "configuration_id"}) != config["configuration_id"]:
@@ -940,7 +960,7 @@ def _validate_slab_configuration(config, *, replay=False):
         raise ValueError("configuration requires layers")
     layers = [material_from_dict(d) for d in config["layers"]]
     # Read archives even without Numba installed; replay still requires its backend.
-    checked = simulate_slab(layers, **(p | dict(n_histories=0, backend="python")))["run_info"]
+    checked = simulate_slab(layers, material_mode=mode, **(p | dict(n_histories=0, backend="python")))["run_info"]
     if config["group_id"] != _slab_group_id(config):
         raise ValueError("experiment group mismatch")
     protocol = config["verification_protocol"]
@@ -955,7 +975,7 @@ def _validate_slab_configuration(config, *, replay=False):
         "Absorbing outer boundaries; no multiplication"] if protocol["problem_id"] != "none" else []
     if protocol["assumptions"] != expected_assumptions:
         raise ValueError("verification assumptions changed")
-    if protocol["problem_id"] != "none" and any(resolve_medium_rates(d)[1] != 0 for d in layers):
+    if protocol["problem_id"] != "none" and any(resolve_medium_rates(d, mode=mode)[1] != 0 for d in layers):
         raise ValueError("verification requires zero scattering")
     _object_fields(config["code_sha256"], "code_sha256", _research_code_hashes(), _research_code_hashes())
     for digest in config["code_sha256"].values():
@@ -1005,7 +1025,7 @@ def _slab_verification(config, result):
 
 def _slab_ml_record(config, result, verification):
     eligible = result["histories_complete"] and result["processed_histories"] > 0
-    return dict(features=_slab_features(config),
+    record = dict(features=_slab_features(config),
         targets={k: v["estimate"] for k, v in result["estimates"].items()},
         metadata=dict(group_id=config["group_id"], configuration_id=config["configuration_id"],
             algorithm_version=config["algorithm_version"], seed=config["parameters"]["seed"],
@@ -1014,6 +1034,16 @@ def _slab_ml_record(config, result, verification):
             verification_status=verification["status"] if verification else "not_checked",
             uncertainty=result["estimates"], warnings=result["warnings"],
             eligible_for_training=eligible and verification is not None and verification["status"] == "passed"))
+    if config["schema_version"] == SLAB_CONFIGURATION_SCHEMA:
+        record["metadata"].update(material_mode=config["material_mode"],
+            material_model_version=config["material_model_version"],
+            parameter_verification=[d["quality"]["verification_status"] for d in config["layers"]],
+            scientific_validation="not_established")
+        if config["material_mode"] == "reference":
+            # Source checking of cross sections does not verify the approximation
+            # against a real material. Existing certified training subset stays strict.
+            record["metadata"]["eligible_for_training"] = False
+    return record
 
 
 def run_slab_experiment(config, *, cancel_event=None):
@@ -1024,7 +1054,8 @@ def run_slab_experiment(config, *, cancel_event=None):
     from material import _json_data
     config = _json_data(config)  # Own the snapshot; do not mutate caller data.
     layers = _validate_slab_configuration(config, replay=True)
-    result = simulate_slab(layers, **config["parameters"], cancel_event=cancel_event)
+    result = simulate_slab(layers, **config["parameters"], cancel_event=cancel_event,
+                           material_mode=config.get("material_mode", "legacy"))
     result = {k: v for k, v in result.items() if k not in ("sampled_paths_cm", "sampled_path_fates")}
     result["sampled_paths_omitted"] = True
     verification = _slab_verification(config, result)
@@ -1062,7 +1093,12 @@ def _validate_slab_experiment(experiment):
     if _content_hash(expected) != _content_hash(result["estimates"]):
         raise ValueError("statistics disagree with outcome counts")
     expected_warnings = (["no_histories"] if n == 0 else []) + (["collision_limit_reached"] if counts["collision_limit"] else []) + (["numerical_resolution_limit"] if counts["numeric_limit"] else [])
-    if result["warnings"] != expected_warnings or result["limitations"] != ["abstract_nonreactive_model", "piecewise_constant_rates", "isotropic_scattering", "marginal_not_simultaneous_intervals"]:
+    expected_limits = ["abstract_nonreactive_model", "piecewise_constant_rates", "isotropic_scattering", "marginal_not_simultaneous_intervals"]
+    if config.get("material_mode") == "reference":
+        from material import REFERENCE_WARNINGS, REFERENCE_LIMITATIONS
+        expected_warnings += list(REFERENCE_WARNINGS)
+        expected_limits += list(REFERENCE_LIMITATIONS)
+    if result["warnings"] != expected_warnings or result["limitations"] != expected_limits:
         raise ValueError("warnings or limitations disagree with result")
     _object_fields(result["timing"], "timing", ("transport_seconds", "total_seconds"), ("transport_seconds", "total_seconds"))
     for value in result["timing"].values():
@@ -1076,6 +1112,8 @@ def _validate_slab_experiment(experiment):
         source_x_cm=p["source_x"], source_mu=p["source_mu"], confidence=p["confidence"],
         max_memory_bytes=p["max_memory_bytes"], edges_cm=p["edges_cm"], layers=config["layers"],
         backend="numba" if p["backend"] == "numba" else "python_numpy", **config["environment"])
+    if config.get("material_mode") == "reference":
+        expected_info["material_mode"] = "reference"
     if _content_hash(info) != _content_hash(expected_info):
         raise ValueError("result configuration/environment mismatch")
     verification = _json_data(_slab_verification(config, result))

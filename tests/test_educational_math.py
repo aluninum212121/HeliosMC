@@ -442,3 +442,141 @@ def test_worker_execution_cancellation_and_failure():
         worker.cancel()
         if worker.thread:
             worker.thread.join(timeout=30)
+
+
+def reference_water():
+    from material import get_reference_transport_dataset, REFERENCE_APPROXIMATION
+    return get_reference_transport_dataset("Вода (H₂O)", approximation=REFERENCE_APPROXIMATION)
+
+
+def test_reference_rates_reach_unchanged_kernel_and_preserve_default_outputs():
+    from material import resolve_reference_rates
+    water = reference_water()
+    a, s = resolve_reference_rates(water)
+    options = dict(n_histories=2000, seed=201, max_collisions=200, max_samples=4, backend="python")
+    reference = physics.simulate_slab([water], [0., .2], material_mode="reference", **options)
+    explicit = physics.simulate_slab([medium(a,s)], [0., .2], **options)
+    legacy = physics.simulate_slab([medium(a,s)], [0., .2], material_mode="legacy", **options)
+    for key in ("outcome_counts", "estimates", "sampled_path_fates"):
+        assert reference[key] == explicit[key] == legacy[key]
+    for p, q in zip(reference["sampled_paths_cm"], explicit["sampled_paths_cm"]):
+        np.testing.assert_array_equal(p, q)
+    assert explicit["run_info"] == legacy["run_info"]
+    assert reference["run_info"]["material_mode"] == "reference"
+    assert reference["run_info"]["layers"][0]["quantities"][1]["values"] == water.state.density
+    assert "reference_free_gas_fixed_energy_approximation" in reference["warnings"]
+    assert "no_bound_atom_thermal_scattering" in reference["limitations"]
+    if physics.HAS_NUMBA:
+        compiled = physics.simulate_slab([water], [0., .2], material_mode="reference", **(options | dict(backend="numba")))
+        assert compiled["outcome_counts"] == reference["outcome_counts"]
+        assert compiled["estimates"] == reference["estimates"]
+
+
+def test_reference_json_csv_npz_replay_metadata_and_grouping(tmp_path):
+    water = reference_water()
+    experiments = []
+    for seed in (701, 702):
+        config = physics.create_slab_configuration("reference-demo", [water], [0., .2], 1000,
+            seed=seed, material_mode="reference", backend="python")
+        experiment = physics.run_slab_experiment(config)
+        digest = physics.export_slab_experiment(experiment, tmp_path / str(seed))
+        loaded = physics.load_slab_experiment(tmp_path / str(seed), expected_sha256=digest)
+        assert loaded == experiment
+        replay = physics.run_slab_experiment(loaded["configuration"])
+        assert replay["result"]["outcome_counts"] == experiment["result"]["outcome_counts"]
+        assert replay["result"]["estimates"] == experiment["result"]["estimates"]
+        assert loaded["configuration"]["parameters"]["seed"] == seed
+        metadata = loaded["ml_record"]["metadata"]
+        assert metadata["material_mode"] == "reference"
+        assert metadata["parameter_verification"] == ["source_checked"]
+        assert metadata["scientific_validation"] == "not_established"
+        assert not metadata["eligible_for_training"]
+        assert set(loaded["ml_record"]["features"]) == {"rates_per_cm", "edges_cm", "source_x_cm", "source_mu", "n_histories", "max_collisions"}
+        with np.load(tmp_path / str(seed) / "arrays.npz", allow_pickle=False) as arrays:
+            assert arrays["rates_per_cm"].tolist() == loaded["ml_record"]["features"]["rates_per_cm"]
+        experiments.append(loaded)
+    assert experiments[0]["configuration"]["group_id"] == experiments[1]["configuration"]["group_id"]
+    with pytest.raises(ValueError, match="training requires"):
+        physics.split_slab_groups(experiments)
+
+
+def test_reference_graphite_density_is_input_not_automatic_validation(tmp_path):
+    from material import get_reference_transport_dataset, DataOrigin, REFERENCE_APPROXIMATION
+    origin = DataOrigin(original_reference="Invented sample for testing, not an experimental measurement",
+        processing_description="Caller supplied 1.6 g/cm^3 at 300 K")
+    graphite = get_reference_transport_dataset("Графит", approximation=REFERENCE_APPROXIMATION,
+        density=1.6, density_origin=origin)
+    c = physics.create_slab_configuration("graphite", [graphite], [0., .1], 100, seed=3, material_mode="reference")
+    r = physics.run_slab_experiment(c)
+    physics.export_slab_experiment(r, tmp_path / "graphite")
+    assert physics.load_slab_experiment(tmp_path / "graphite") == r
+    assert r["ml_record"]["metadata"]["parameter_verification"] == ["unverified"]
+    assert not r["ml_record"]["metadata"]["eligible_for_training"]
+
+
+def test_old_v1_experiment_archive_remains_readable(tmp_path):
+    from material import _content_hash
+    c = physics.create_slab_configuration("old-contract", [medium(.5)], [0., 1.], 200, seed=4, verification="pure_absorption_v1")
+    # Reconstruct the exact old schema, including absence of modern metadata.
+    c["schema_version"] = "heliosmc.slab-configuration.v1"
+    del c["material_mode"], c["material_model_version"]
+    c["configuration_id"] = _content_hash({k:v for k,v in c.items() if k != "configuration_id"})
+    r = physics.run_slab_experiment(c)
+    assert "material_mode" not in r["ml_record"]["metadata"]
+    physics.export_slab_experiment(r, tmp_path / "v1")
+    assert physics.load_slab_experiment(tmp_path / "v1") == r
+
+
+@pytest.mark.parametrize("change", ["mode", "energy", "temperature", "model", "warning", "ml_status"])
+def test_reference_experiment_rejects_semantic_tampering(tmp_path, change):
+    from material import _content_hash
+    c = physics.create_slab_configuration("forged-reference", [reference_water()], [0., .1], 30, seed=4, material_mode="reference")
+    r = physics.run_slab_experiment(c)
+    c = r["configuration"]
+    if change == "mode": c["material_mode"] = "legacy"
+    if change == "model": c["material_model_version"] = "full_thermal_physics"
+    if change == "energy": c["layers"][0]["quantities"][-1]["averaging"]["energy_bounds_ev"] = [.03,.03]
+    if change == "temperature":
+        c["layers"][0]["temperature"] = 298.15
+        c["layers"][0]["state"]["temperature_range"] = [298.15,300.]
+    if change == "warning": r["result"]["warnings"] = []
+    if change == "ml_status": r["ml_record"]["metadata"]["eligible_for_training"] = True
+    c["configuration_id"] = _content_hash({k:v for k,v in c.items() if k != "configuration_id"})
+    with pytest.raises(ValueError):
+        physics.export_slab_experiment(r, tmp_path / "bad")
+
+
+def test_reference_no_mode_mixing_or_missing_data_fallback():
+    from material import get_reference_dataset, get_builtin_dataset, MATERIALS
+    for dataset in [get_reference_dataset("Вода (H₂O)"), medium()] + [get_builtin_dataset(k) for k in MATERIALS]:
+        with pytest.raises(ValueError):
+            physics.create_slab_configuration("no-fallback", [dataset], [0., 1.], 10, material_mode="reference")
+    with pytest.raises(ValueError):
+        physics.simulate_slab([reference_water()], [0., 1.], 10)
+    with pytest.raises(ValueError):
+        physics.simulate_slab([reference_water(),medium()], [0., 1., 2.], 10, material_mode="reference")
+    with pytest.raises(ValueError, match="zero scattering"):
+        physics.create_slab_configuration("wrong-oracle", [reference_water()], [0., 1.], material_mode="reference", verification="pure_absorption_v1")
+
+
+def test_reference_first_flight_analytic_ensemble_predeclared():
+    # Fixed before running: each two-sided binomial p >= 1e-6 for five independent
+    # seeds, plus aggregate p >= 1e-6. max_collisions=0 counts only first-flight
+    # escape; collision histories remain censored, not fabricated full solutions.
+    from scipy.constants import Avogadro
+    water = reference_water()
+    sigma_a = 2*(.99985*.3326+.00015*.00055)+.99762*.0001899+.00038*.24447+.002*.0001408
+    sigma_s = 2*(.99985*30.27+.00015*4.246)+.99762*3.986+.00038*3.615+.002*3.532
+    rate = water.state.density*Avogadro/18.0153*(sigma_a+sigma_s)*1e-24
+    expected = float(np.exp(-rate*.3))
+    counts = []
+    for seed in (101, 202, 303, 404, 505):
+        r = physics.simulate_slab([water], [0., .3], 5000, seed=seed, max_collisions=0, material_mode="reference")
+        k = r["outcome_counts"]["escaped_right"]
+        pvalue = stats.binomtest(k, 5000, expected).pvalue
+        counts.append(k)
+        print(f"reference-first-flight seed={seed}, right={k}/5000, expected={expected:.12g}, p={pvalue:.12g}")
+        assert pvalue >= 1e-6
+        assert r["unfinished_histories"] == 5000-k
+        assert r["estimates"]["escaped_right"]["estimate"] is None
+    assert stats.binomtest(sum(counts), 25000, expected).pvalue >= 1e-6
