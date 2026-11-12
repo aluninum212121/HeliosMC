@@ -58,6 +58,20 @@
       "availability_status": "known_source"
     },
     {
+      "library_id": "jendl-4.0-carbon-profile-summaries",
+      "name": "JENDL-4.0 natural-carbon point and Maxwellian summary data",
+      "organization": "Japan Atomic Energy Agency Nuclear Data Center",
+      "version": "4.0 (2010); HTML snapshot checked 2026-11-10; raw-file errata identity unpinned",
+      "source_url": "https://wwwndc.jaea.go.jp/cgi-bin/Tab80WWW.cgi?iso=C000&lib=J40",
+      "data_kind": "evaluated",
+      "formats": ["HTML numerical summary"],
+      "checked_on": "2026-11-10",
+      "documentation_urls": ["https://wwwndc.jaea.go.jp/cgi-bin/Tab80WWW.cgi?iso=C000&lib=J40", "https://jopss.jaea.go.jp/search/servlet/search?5026620=&language=1"],
+      "license": null,
+      "usage_notes": "C-0 numerical table and formula actually opened: 0.0253-eV MT2=4.942 b and MT102=3.860 mb; Maxwellian MT2=5.575 b and MT102=3.862 mb; target processing T=300 K. Maxwellian bounds 1e-5..10 eV; published MACS contains 2/sqrt(pi), so normalized flux-group values multiply MACS by sqrt(pi)/2. JAEA-Data/Code 2010-017 abstract (Namekawa/Katakura, September 2010, DOI 10.11484/jaea-data-code-2010-017) explicitly identifies kT=0.0253 eV. Abstract read; full report PDFs and errata NOT read. Natural-carbon evaluation used per atom, without a JENDL-5 isotope mixture. No raw library or covariance processing. Full checked water isotope set not obtained: attempted J40 O17/O18/C12/C13 table URLs were inaccessible, and no values were guessed. J40 H1/H2/O16 tables were opened but supply no water preset. JENDL-5 Maxwellian page did not independently establish spectral kT; its point preset remains separate. Fast/epithermal profiles require additional channel data/physics and are not enabled.",
+      "availability_status": "known_source"
+    },
+    {
       "library_id": "nist-ncnr-isotope-abundances-1992",
       "name": "NCNR neutron scattering lengths and cross sections (isotope abundances only used)",
       "organization": "NIST Center for Neutron Research; underlying Neutron News compilation",

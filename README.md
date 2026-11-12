@@ -12,7 +12,57 @@ py main.py
 
 Numba is optional. When it is unavailable, `numba_compat.py` provides the Python execution fallback.
 
+## Experiment workspace
+
+The desktop interface uses standard Tkinter/ttk with embedded Matplotlib
+(`TkAgg`). Its light workspace has a top action bar, a scrollable parameter
+sidebar, result tabs and a bottom status/progress bar. No additional GUI package
+is required. The normal workflow is **choose a scenario → enter parameters →
+run → inspect results → export**.
+
+- **Generations · legacy** preserves every historical material preset and the
+  existing source-generation algorithm. The overview distinguishes the selected
+  mean from individual generation ratios and from their descriptive spread.
+  The ratio is not labelled a validated physical `k_eff`.
+- **Transport through a slab** runs the existing independent-history model.
+  Choose a documented reference profile or an educational medium with explicitly
+  entered absorption/scattering rates. Reference water/graphite choices follow
+  the available profiles; graphite additionally requires its density, sample
+  description and density method. A point at 0.0253 eV is identified as a point,
+  while the existing Maxwell-flux profile is identified as an average.
+
+`Overview` presents compact results; `Graphs` selects one plot at a time;
+`Heatmap` shows registered fission coordinates projected onto X–Y with a colorbar;
+`Trajectories` shows the retained sample for a selected generation, with optional
+playback; `Data` lists the actual inputs, results, seed and provenance. The heatmap
+counts fissions rather than neutron flux. Slab research results contain aggregate
+outcomes and intentionally omit spatial paths, so the corresponding spatial tabs
+explain that no such data are available.
+
+`Open` reads an existing slab experiment's `experiment.json` and checks its
+JSON/CSV/NPZ bundle through the existing loader. The loaded configuration is kept
+intact for replay; choose `New` to configure a different experiment. `Export`
+saves a completed slab experiment into a **new directory**, preserving its seed,
+inputs and statistical uncertainty. It also saves the selected plot as PNG at
+300 dpi. Historical generation results support plot export; a new research
+archive format for them has not been introduced. Standalone, unrun configurations
+are not saved as if they were completed experiments.
+
+Simulation work stays in the existing background worker. Stop requests are
+cooperative: generation runs stop at generation boundaries and slab runs between
+batches. No partial result is presented as completed. Slab progress is
+indeterminate because its existing engine has no progress callback. Animation
+does not start automatically. Replay retains the existing checks for matching
+core code, numerical backend and software environment.
+
+For implementation contracts and verification notes, see the
+[GUI workspace audit](docs/ARCHITECTURE_AUDIT.md#experiment-workspace-redesign-2026-11-12).
+
 ## Project modules
+
+A [native workspace screenshot](docs/gui_workspace.png) shows the educational
+slab overview. Manual desktop interaction was stopped with Escape during this
+session; full Windows scaling coverage is not claimed.
 
 - `main.py` starts the application.
 - `physics.py` handles transport, fission source generation, generation statistics, and the existing multiplication estimate.
@@ -189,13 +239,61 @@ Mixing reference and explicit-rate layers raises an error. Calls without the
 new keyword preserve their original behavior; historical `MATERIALS` and
 multiplication APIs retain their data and algorithms.
 
-New configurations use v2 with material mode/model version; v1 archives remain
+This initial integration used v2 with material mode/model version; v1 archives remain
 readable through the same JSON/CSV/NPZ reader. Code/environment hashes still
 guard exact replay. Reference runs carry explicit approximation warnings and
 are excluded from the current mathematically certified training subset.
 Their source checks do not establish real-material scientific validation.
 The [current audit](docs/ARCHITECTURE_AUDIT.md#reference-material-model-2026-11-10)
 contains every used isotope value, its source, assumptions and test evidence.
+
+## Documented energy profiles (2026-11-10)
+
+`get_reference_profiles()` lists profile IDs, availability by material, spectrum,
+energy bounds, material/processing and neutron-spectrum temperatures, sources,
+verification status and limitations. Choose `profile_id=` when constructing a
+reference material; omitting it preserves the complete original JENDL-5 point
+record. Every layer of an experiment must use the same profile/library.
+
+| Profile ID | Energy definition | Available materials |
+| --- | --- | --- |
+| `jendl5_point_0p0253ev` | Point at 0.0253 eV | Water and graphite |
+| `jendl40_point_0p0253ev` | Independent JENDL-4.0 natural-carbon point control at 0.0253 eV | Graphite |
+| `jendl40_maxwell_flux_0p0253ev` | Normalized flux weight E exp(-E/kT), kT=0.0253 eV, bounds 1e-5..10 eV | Graphite |
+
+The [JAEA C-0 table](https://wwwndc.jaea.go.jp/cgi-bin/Tab80WWW.cgi?iso=C000&lib=J40)
+publishes MT2/MT102 MACS with a 2/sqrt(pi) prefactor. The group preset removes
+that prefactor: sigma_group = sqrt(pi)/2 * MACS. Its neutron-spectrum temperature
+is about 293.5943 K; the evaluated material/processing temperature remains 300 K.
+The [official report abstract](https://jopss.jaea.go.jp/search/servlet/search?5026620=&language=1)
+specifies kT. These JENDL-4.0 records use the elemental C-0 evaluation; no JENDL-5
+isotope channels are substituted. Point controls are not spectral averages.
+
+```python
+from material import (get_reference_transport_dataset, get_reference_profiles,
+                      REFERENCE_MAXWELL_PROFILE, REFERENCE_GROUP_APPROXIMATION)
+
+profiles = get_reference_profiles()
+# Supply independently identified sample_density_g_cm3 and sample_origin.
+graphite = get_reference_transport_dataset("Графит",
+    profile_id=REFERENCE_MAXWELL_PROFILE,
+    approximation=REFERENCE_GROUP_APPROXIMATION,
+    density=sample_density_g_cm3, density_origin=sample_origin)
+# Pass [graphite] with material_mode="reference" to the same slab/export APIs.
+```
+
+The group closure holds the imposed spectrum fixed after collisions; it does
+not model moderation or spectral hardening. Exponential attenuation using an
+averaged coefficient is not the integral of energy-dependent attenuation.
+Graphite density remains a required unverified caller input. New water profiles
+are explicitly unavailable because a complete source-checked channel set was
+not obtained. Fast and epithermal presets are not enabled from incomplete data.
+
+Configuration v3 archives the full profile in configuration, run information
+and ML metadata. The same JSON/CSV/NPZ APIs still read v1/v2 archives; seed and
+uncertainty remain intact. Reference runs retain their strict training exclusion.
+The [profile audit](docs/ARCHITECTURE_AUDIT.md#documented-reference-energy-profiles-2026-11-10)
+records the assessment made before implementation and test evidence.
 
 ## Tests
 

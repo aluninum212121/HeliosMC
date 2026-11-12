@@ -592,7 +592,7 @@ def graphite_profile(profile_id):
 
 @pytest.mark.parametrize("profile_id", ["jendl5_point_0p0253ev", "jendl40_point_0p0253ev", "jendl40_maxwell_flux_0p0253ev"])
 def test_profile_selection_reproducibility_export_and_kernel_equivalence(tmp_path, profile_id):
-    from material import resolve_reference_rates
+    from material import resolve_reference_rates, _json_data
     d = graphite_profile(profile_id)
     c = physics.create_slab_configuration("profile-roundtrip",[d],[0.,2.],700,seed=301,
         material_mode="reference",backend="python",max_collisions=100)
@@ -602,7 +602,7 @@ def test_profile_selection_reproducibility_export_and_kernel_equivalence(tmp_pat
     plain = physics.simulate_slab([medium(*resolve_reference_rates(d))],[0.,2.],700,seed=301,
         backend="python",max_collisions=100)
     assert r["result"]["outcome_counts"] == plain["outcome_counts"]
-    assert r["result"]["estimates"] == plain["estimates"]
+    assert r["result"]["estimates"] == _json_data(plain["estimates"])
     assert r["result"]["run_info"]["reference_profile"] == c["reference_profile"]
     assert r["ml_record"]["metadata"]["reference_profile"] == c["reference_profile"]
     assert "reference_profile" not in r["ml_record"]["features"]
@@ -615,7 +615,7 @@ def test_profile_selection_reproducibility_export_and_kernel_equivalence(tmp_pat
     if physics.HAS_NUMBA:
         compiled = physics.simulate_slab([d],[0.,2.],700,seed=301,material_mode="reference",backend="numba",max_collisions=100)
         assert compiled["outcome_counts"] == r["result"]["outcome_counts"]
-        assert compiled["estimates"] == r["result"]["estimates"]
+        assert _json_data(compiled["estimates"]) == r["result"]["estimates"]
 
 
 def test_profile_mixing_and_library_mixing_are_rejected():

@@ -67,7 +67,7 @@ def test_estimator_compatibility_with_unfinished_denominator():
 
 
 @pytest.mark.parametrize('steps,source,expected', [(0, 100, 'НЕПОЛНЫЙ РЕЗУЛЬТАТ'),
-                                                 (2, 100, 'ПОДКРИТИЧНЫЙ'),
+                                                 (2, 100, 'СРЕДНЕЕ k < 0,99'),
                                                  (2, 0, 'НЕТ ОЦЕНКИ')])
 def test_gui_completeness_classification(steps, source, expected):
     app = NeutronSimGUI(show=False)
@@ -79,13 +79,88 @@ def test_gui_completeness_classification(steps, source, expected):
         assert expected in text
         if steps == 0:
             assert 'Оценка может быть неполной' in text
-            assert 'ПОДКРИТИЧНЫЙ' not in text
+            assert 'СРЕДНЕЕ k < 0,99' not in text
             assert 'Лимит шагов: 100/100 (100.0%)' in text
         marked = any(artist.get_label() == 'Лимит шагов'
                      for artist in app.ax_k.collections)
         assert marked == (steps == 0)
         app.fig.canvas.draw()
         assert all(t.get_position()[1] > 0 for t in app.ax_stat.texts)
+    finally:
+        app._on_close(None)
+        plt.close(app.fig)
+
+
+@pytest.mark.parametrize('history,expected', [
+    ([1.4, .8, .9, 29 / 26], 'СРЕДНЕЕ k < 0,99'),
+    ([.2, 1.1, 1.2, 1.3], 'СРЕДНЕЕ k > 1,01'),
+    ([.2, .9, 1., 1.1], 'СРЕДНЕЕ k ≈ 1'),
+])
+def test_gui_separates_generation_coefficient_from_active_mean(history, expected):
+    # Display fixtures, not physical measurements. The final point is above
+    # one in every case, whereas the selected mean can be below/above/near one.
+    result = dict(k_history=history, k_mean=float(np.mean(history[1:])),
+                  k_std=float(np.std(history[1:])), path_frames=[], fiss_frames=[],
+                  estimator=dict(active_generation_start=1),
+                  generation_stats=[dict(processed=n, outcome_counts=dict(
+                      fission=0, absorption=n, leak=0, unfinished=0))
+                      for n in (1400, 100, 19, 26)])
+    app = NeutronSimGUI(show=False)
+    try:
+        app.result = result
+        app.current_gen = 3
+        app.result_config = dict(material=next(iter(MATERIALS.values())), n_source=1400)
+        app._render_all()
+        text = '\n'.join(t.get_text() for t in app.ax_stat.texts)
+        assert f"Среднее k = {result['k_mean']:.4f}" in text
+        assert 'По поколениям 2–4' in text
+        assert f'k поколения 4 = {history[3]:.4f}' in text
+        assert 'Нейтронов в поколении: 26' in text
+        assert 'Начальный источник: 1400' in text
+        assert expected in text
+        assert 'КРИТИЧНЫЙ' not in text
+        assert 'обогащение' not in text
+        np.testing.assert_array_equal(app.ax_k.lines[0].get_ydata(), history)
+        mean_line = next(line for line in app.ax_k.lines
+                         if line.get_label().startswith('Среднее k ='))
+        np.testing.assert_array_equal(mean_line.get_ydata(), [result['k_mean']] * 2)
+        assert f'k поколения = {history[3]:.4f}' in app.ax_main.get_title(loc='left')
+
+        # Both button navigation and animation update the selected population
+        # and coefficient without changing the overall mean or selected range.
+        app._step_gen(-1)
+        text = '\n'.join(t.get_text() for t in app.ax_stat.texts)
+        assert f'k поколения 3 = {history[2]:.4f}' in text
+        assert 'Нейтронов в поколении: 19' in text
+        assert f"Среднее k = {result['k_mean']:.4f}" in text
+        # Playback requires a genuinely available stored path sample.
+        result['path_frames'] = [[(np.zeros((2, 3)), 'absorption')]]
+        with patch('gui.animation.FuncAnimation') as animate:
+            app._on_anim(None)
+            update = animate.call_args.args[1]
+            update(0)
+        text = '\n'.join(t.get_text() for t in app.ax_stat.texts)
+        assert f'k поколения 1 = {history[0]:.4f}' in text
+        assert f"Среднее k = {result['k_mean']:.4f}" in text
+        app.fig.canvas.draw()
+        assert all(t.get_position()[1] > 0 for t in app.ax_stat.texts)
+    finally:
+        app._on_close(None)
+        plt.close(app.fig)
+
+
+def test_gui_short_run_shows_actual_averaging_range():
+    app = NeutronSimGUI(show=False)
+    try:
+        # Fewer generations than burn-in: the unchanged estimator uses all
+        # available generations. The GUI must not claim they were excluded.
+        app.result = physics.estimate_k_full(n_gen=1, n_source=10, n_burnin=8,
+                                            material=material(a=1., s=0.), seed=1)
+        app._render_all()
+        text = '\n'.join(t.get_text() for t in app.ax_stat.texts)
+        assert 'По поколениям 1–1' in text
+        assert 'k поколения 1 = 0.0000' in text
+        assert not app.ax_k.patches  # no discarded-generation shading
     finally:
         app._on_close(None)
         plt.close(app.fig)
@@ -157,6 +232,8 @@ def test_full_seeded_reference_and_cap(baseline):
     config = dict(n_gen=4, n_source=150, radius=1e9, material=mat, seed=2026,
                   max_steps=8, max_samples_per_gen=7, n_burnin=1)
     x, y = baseline.estimate_k_full(**config), physics.estimate_k_full(**config)
+    # Population control must not clip the reported ratio to one.
+    assert y['k_mean'] > 1
     for key in ('k_history', 'k_mean', 'k_std'):
         assert x[key] == y[key]
     for a, b in zip(x['generation_stats'], y['generation_stats']):

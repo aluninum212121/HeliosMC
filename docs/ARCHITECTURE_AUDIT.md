@@ -1817,3 +1817,389 @@ checks, specimen-specific composition/density validation, and statistically
 qualified reference-surrogate training targets. These limitations do not prevent
 the implemented point-data coefficients from being used and archived by the
 current educational calculation; they limit its physical interpretation.
+
+## Documented reference energy profiles (2026-11-10)
+
+### Assessment made before implementation
+
+The user requested a commit before extending profiles. Commit `c4b4430` records
+the seven previously modified files. `git add --all` could not read the existing
+untracked research_demo directory (Permission denied), including with elevated
+Git access; it remains outside that commit and is preserved. During development
+a separate commit `99d3855` appeared with part of the profile implementation;
+it was preserved. Remaining fixes/documentation were developed on top. No push
+or destructive Git operation was performed.
+
+The material adapter, unchanged slab kernel, research v1/v2 contracts, source
+catalog and existing material/math tests were reviewed first. The model consumes
+two constant macroscopic rates and does not follow neutron energy. Thus a
+documented flux average can drive a prescribed-spectrum closure, subject to
+explicit additional assumptions. A new energy band cannot be inferred from one
+point or from a capture-only integral with missing scattering.
+
+| Candidate | Evidence and compatibility | Decision |
+| --- | --- | --- |
+| Existing JENDL-5 0.0253-eV point | Complete checked water/carbon channel set at 300 K already present | Preserve original preset contents/ID/version; explicit profile ID added externally |
+| JENDL-4.0 natural-carbon point control | Official C-0 point cells available | Executable graphite control; avoids attributing all differences to spectral averaging |
+| JENDL-4.0 natural-carbon Maxwellian flux mean | Numerical MACS, normalization/bounds and explicit kT documented | Executable graphite group preset with fixed imposed spectrum and isotropic closure |
+| Corresponding JENDL-4.0 water profiles | H1/H2/O16 tables opened, but complete source-checked water-isotope channel set not obtained | Unavailable with diagnostic; no omitted isotopes or JENDL-5 nuclear substitution |
+| JENDL-5 Maxwellian group | Numerical summaries exist; inspected calculation page does not separately establish spectral kT sufficiently clearly | Not enabled by assuming the JENDL-4.0 spectrum convention carries over |
+| Epithermal 1/E group | Capture resonance integral alone does not supply a complete scattering/disappearance group set | Not enabled; requires appropriate processed data and defined weighting |
+| Fast point/spectrum profiles | Open inelastic/disappearance and neutron-producing channels may matter | Not enabled; no extra reaction/multiplicity physics added |
+| Bound-state thermal material group | Molecular/crystal scattering and energy/angle redistribution absent | Outside this extension; scalar changes cannot supply those processes |
+
+### Sources, exact meanings and derivation
+
+The [JAEA JENDL-4.0 C-0 table](https://wwwndc.jaea.go.jp/cgi-bin/Tab80WWW.cgi?iso=C000&lib=J40)
+was opened on 2026-11-10, including the numerical columns and MACS equation.
+The [official abstract of Namekawa/Katakura, JAEA-Data/Code 2010-017](https://jopss.jaea.go.jp/search/servlet/search?5026620=&language=1)
+(September 2010; DOI 10.11484/jaea-data-code-2010-017) explicitly identifies
+Maxwellian kT=0.0253 eV. Its full PDFs/errata were not opened. No raw nuclear
+library, processing software version, covariance or source checksum was verified.
+The JENDL-4.0 profile uses elemental natural-carbon C-0 per atom. It does not
+construct a nominally JENDL-4.0 material using JENDL-5 C12/C13 values.
+
+| Preset ID | Type and bounds in eV | Spectrum | Material/processing T | Availability |
+| --- | --- | --- | ---: | --- |
+| jendl5_point_0p0253ev | Point [.0253,.0253] | Monoenergetic evaluation; no averaging | 300 K | Water and graphite |
+| jendl40_point_0p0253ev | Point [.0253,.0253] | Monoenergetic natural-carbon control | 300 K | Graphite |
+| jendl40_maxwell_flux_0p0253ev | Flux average [1e-5,10] | w(E)=E exp(-E/.0253 eV), normalized on the stated interval | 300 K | Graphite |
+
+The two point presets share an energy definition but use separately identified
+evaluations/composition representations. There are two spectral definitions,
+not three independently sampled energy bands. For the group, spectrum kT is
+0.0253 eV and its equivalent neutron temperature is 293.5943084752171 K, computed
+using scipy.constants.Boltzmann/elementary_charge. That is distinct from the
+material/processing temperature, not an assumption of thermal equilibrium.
+
+| C-0 quantity | Published point (barn) | Published MACS (barn) | Normalized flux-group result (barn) |
+| --- | ---: | ---: | ---: |
+| MT102 disappearance / sigma_a | .003860 (3.860 mb) | .003862 (3.862 mb) | .0034226083860985513 |
+| MT2 elastic / sigma_s | 4.942 | 5.575 | 4.940715109399125 |
+
+The published definition is `MACS = (2/sqrt(pi))*integral(sigma*w)/integral(w)`.
+Consequently the required group mean is `sigma_group=(sqrt(pi)/2)*MACS` on those
+same bounds. No arithmetic point averaging, locally invented sigma(E), or
+integration of an unopened nuclear file occurs. Original MACS numbers are kept
+as separate quantities before normalization. Derived digits describe floating
+calculation/replay, not extra physical precision beyond the printed source.
+All selected nonelastic/production thresholds for the C-0 evaluation are above
+10 eV; the selected group has elastic scattering and capture disappearance.
+
+Nuclear table transcription status is source_checked; independent scientific
+validation remains unverified. Graphite density still must be supplied with a
+sample/grade/method DataOrigin at 300 K and remains unverified. Conventional
+12.0107 g/mol comes from the existing NIST reference; the nuclear C-0 isotope
+fractions are not independently resolved or claimed to assay that sample.
+At a purely illustrative caller density of 1.6 g/cm^3, derived group rates are
+.00027457423087669366 / .39636233483624206 cm^-1 (absorption/scattering).
+This density is a software fixture, not a newly sourced graphite property.
+
+### Implemented API, calculation and archive contract
+
+No new production module/class/dependency was needed. Existing MaterialDataset
+and AveragingConditions structures carry the materials and reduction metadata.
+The default `get_reference_transport_dataset()` path builds the same JENDL-5
+record as before, including every quantity/source/quality field. New optional
+`profile_id=` selects a named record. `get_reference_profiles()` returns fresh
+inert descriptors with bounds, spectral law/kT/T, sources/version/date,
+availability, numerical-check status, scientific-validation status and limits.
+Mutating a returned descriptor does not mutate the authoritative definitions.
+
+The Maxwellian preset requires explicit
+`approximation=REFERENCE_GROUP_APPROXIMATION` (free_gas_fixed_spectrum_isotropic_v1).
+Point profiles use the existing REFERENCE_APPROXIMATION. The group record
+keeps published MACS, normalized microscopic values and per-atom aggregate
+values; density/Avogadro/molar-mass conversion reuses resolve_reference_rates.
+get_reference_transport_dataset -> resolve_reference_profile/rates -> unchanged
+slab arrays/kernel -> statistics remains the executed path. All layers must
+select the same profile/library; an error prevents hidden spectrum/library
+mixing. Memory-budget rejection precedes allocating/checking profile data.
+
+The kernel still evolves position/direction, not energy. The group spectrum is
+an imposed weighting held fixed after collisions and throughout the slab.
+Spectral hardening, moderation, S(alpha,beta), actual evaluated angular laws and
+bound/crystal effects are not added. In general `exp(-mean(Sigma)*L)` differs
+from `mean(exp(-Sigma(E)*L))`; the group calculation does not evaluate the latter.
+The average is source documented, but a group's availability is not independent
+validation of this transport closure or of a real material.
+
+New configurations use heliosmc.slab-configuration.v3. A complete reference_profile
+descriptor is frozen in configuration, run_info and ML metadata; legacy v3 uses
+null profile. Material schema v2 and the JSON/CSV/NPZ experiment envelope/layout
+are retained. Strict readers accept original configuration v1/v2 layouts with
+their original result/ML fields. Old versions admit only their original point
+reference, not a new profile hidden inside an old schema. Version/code/environment
+replay guards remain active. Numeric sidecars still match derived input rates.
+
+Profiles/temperatures/sources/statuses remain metadata. Pre-run rate/geometry/
+source/population/limit features stay unchanged, with no results/uncertainty
+leaking into them. Repeated seeds retain the same problem group. Grouping by
+mathematical coefficients conservatively groups any identical problems even
+if their descriptive profiles differ. Reference results retain explicit warnings
+and exclusion from the current analytically certified training subset.
+
+### Executed verification
+
+New tests check selection/unknown IDs, per-material unavailability, profile
+consistency between layers, wrong approximation, source and spectrum tampering,
+MACS normalization/units, material and full experiment roundtrips, v1/v2 archive
+compatibility, repeat groups, kernel equivalence, and Python/Numba agreement.
+Source values were independently transcribed into the checks. The first focused
+run reported 199 passed/4 failed: a wrongly written expected temperature and
+three JSON-list versus direct Python-tuple comparisons. These test expectations
+were corrected using exact SI definitions and the existing JSON conversion;
+no physical coefficient, seed or tolerance was altered. The next focused run
+passed all 203 tests in 13.81 s.
+
+Full suite with Numba: **305 passed, 2 subtests passed, 35.73 s**.
+The complete Python fallback run is recorded below after completion. Both use
+external TemporaryDirectory locations, disabled bytecode/cache writes and all
+existing tests. No installed dependencies or GUI flows changed.
+
+AST comparison with c4b4430 confirmed unchanged Material, TransportData, MATERIALS,
+_slab_batch, _transport_batch, run_generation_batch and estimate_k_full. Executing
+the previous trusted reference factory and comparing its full serialized output
+confirmed exact JENDL-5 point record preservation for water and graphite.
+Smoke exports for all three presets loaded identically through JSON/CSV/NPZ.
+
+Final full fallback suite: **305 passed, 2 subtests passed, 202.26 s**, with
+`sys.modules['numba']=None` before importing pytest/application. The full Numba
+and fallback runs include the final memory-check ordering and corrected test
+representations. Both passed all tests without skips. Elapsed times are test
+evidence, not performance benchmarks. git diff --check passed.
+
+Files changed relative to the initial c4b4430 snapshot: material.py, physics.py,
+tests/test_material_data.py, tests/test_educational_math.py, README.md,
+docs/data_sources.json and this audit. No new/deleted file, production module,
+dependency, retained dataset corpus or training run. Existing unrelated demo
+files preserved. Some source/test changes reside in the separately observed
+99d3855 commit; final fixes/documentation remain in the working tree.
+
+Supported result: one original point profile for water/graphite, a separate
+natural-carbon point control, and one genuinely flux-averaged natural-carbon
+profile. New averaged water, fast/epithermal groups, bound-state material physics,
+spectral evolution and independent real-material validation remain unsupported.
+Their absence is explicit; no arbitrary replacement numbers fill them.
+
+## Generation coefficient display audit (2026-11-12)
+
+The sphere GUI uses the historical MATERIALS presets and estimate_k_full;
+it does not select the non-fission slab reference profiles described above.
+The calculation and its legacy constants are unchanged by this GUI correction.
+
+The former graph/right-panel discrepancy compared different statistics:
+
+- Each plotted point is k_g = int(F_g * nu) / N_g, before source population
+  control. The trajectory title follows the selected generation.
+- The right panel reports the arithmetic mean of selected generation ratios.
+  With the default n_burnin=8 and 45 completed generations, it averages
+  generations 9 through 45. If there are no more generations than n_burnin,
+  the existing estimator uses every available generation instead.
+- k_std is the population standard deviation of these ratios. It is neither
+  a standard error of the mean nor a physical/model uncertainty. Successive
+  generations are dependent, and their source populations may differ.
+
+The first supplied screenshot has 12 fissions and 14 absorptions in its final
+generation: int(12 * 2.43) / 26 = 29/26 = 1.1153846. This agrees with its
+trajectory title, while the reported 0.9235 is an average over generations.
+The second has int(8 * 2.43) / 19 = 1.0, while its reported mean is 0.9125.
+The screenshots alone do not provide the full precision history needed to
+independently recompute either displayed mean.
+
+For the unchanged legacy pure-U-235 preset, the existing reaction probabilities
+give eventual fission probability sigma_f/(sigma_f+sigma_a) in the idealized
+absence of leakage and step limits. Thus the expected source ratio before
+integer truncation is 2.43 * 1.65/(1.65+2.71) = approximately 0.91961.
+This is an implication of the historical toy constants, not a verified property
+of real U-235. Integer truncation, leakage and incomplete histories can reduce
+the expectation. It is not a bound on every realized generation: small source
+populations can fluctuate above one. No reported-ratio clamp at one exists;
+the existing source-bank cap is applied after recording k_g.
+
+The GUI now labels the generation ratio and selected-generation mean separately,
+draws the mean on the same graph, shades discarded initial generations, shows
+the actual averaging range and selected source population, and identifies the
+initial source count correctly. Button navigation and animation refresh the
+selected-generation status. Incomplete/empty calculations keep priority.
+The existing numerical comparison band [0.99, 1.01] is retained as a descriptive
+GUI band, explicitly not a confidence interval or a criticality determination.
+Unverified k_eff claims and radius/enrichment optimization advice were removed.
+
+Regression coverage includes a last point above one with a mean below one,
+means above/near one, navigation/animation, short-run burn-in fallback,
+incomplete histories and the unchanged seeded source-control compatibility
+fixture, which explicitly demonstrates a reported mean above one.
+
+Final checks: full Numba suite **309 passed, 2 subtests passed (121.18 s)**;
+Python fallback generation/GUI regression suites **74 passed, 2 subtests passed
+(52.60 s)**. Neither final run reported warnings. An initial focused run
+(106 passed) exposed a missing-font warning for the old stop-button emoji;
+the button now uses a supported square glyph. An Agg preview was rendered and
+visually inspected. A single unchanged 45-generation, 1400-source, 40 cm run
+with seed 2026 gave mean 0.9170742 and generation spread 0.1128013; individual
+points crossed one. This is diagnostic code evidence, not material validation.
+The desktop's interactive backend was not manually exercised. Temporary preview
+files were removed. AST comparison against HEAD confirmed unchanged
+_transport_batch, run_generation_batch, estimate_k_full, Material, TransportData
+and MATERIALS. This correction changes gui.py, tests/test_regression.py and this
+existing audit only; earlier working-tree changes were preserved. No production
+module, dependency, physical-model change, commit or push was introduced.
+
+## Experiment workspace redesign (2026-11-12)
+
+### Scope and interface structure
+
+The redesign replaces the former single Matplotlib control surface with a
+standard Tkinter/ttk application and `FigureCanvasTkAgg` canvases. It introduces
+no third-party GUI dependency or production module. The existing `main.py`
+entry point, `SimulationWorker`, material schema, transport functions and
+research-export formats remain the integration boundaries.
+
+The light workspace groups actions in a top bar, parameters in a scrollable
+sidebar, and analysis in five tabs: Overview, Heatmap, Graphs, Trajectories and
+Data. A bottom status bar reports execution status and progress. Precise numeric
+entries replace the long parameter sliders. Rarely changed seed and computational
+limits are collapsed under additional settings. A single accent identifies the
+Run action; errors and model limitations are separate from the plotted data.
+
+Matplotlib figures use a common light palette, labelled axes and constrained
+layout. The Graphs tab selects a generation-ratio graph, outcome balance or
+source population, instead of showing many small plots together. Outcome counts
+and empirical fractions use the same existing complete counters, with an
+explicit selected-generation/all-generations scope. Summed generation histories
+are repeated histories, not independent experiment samples. Descriptive
+generation spread is not turned into a confidence interval.
+
+### Scenario and material contracts
+
+The generations scenario calls the unchanged `estimate_k_full()` with historical
+`MATERIALS` presets, a fixed seed and the existing radius, population, generation
+and storage/step limits. The coefficient remains source reproduction before
+population control. It is not presented as a physically validated `k_eff` or
+used to declare physical criticality. Incomplete histories remain visible.
+
+The slab scenario creates the existing frozen configuration with
+`create_slab_configuration()` and submits `run_slab_experiment()` to the worker.
+The GUI offers one-layer configuration; the numerical engine and saved format
+retain their existing layer support. Reference selection uses
+`get_reference_profiles()` and `get_reference_transport_dataset()`, including
+per-material profile availability and the required explicit approximation.
+Water conditions remain 300 K and 100000 Pa. Graphite requires user-entered
+positive density, sample/grade description and density method; its density does
+not become independently checked through GUI entry. The existing JENDL-5
+0.0253-eV point and the graphite JENDL-4.0 point/Maxwell-flux profiles retain
+their documented distinctions and bounds.
+
+The educational slab choice builds an explicitly educational dataset with only
+`absorption_rate` and `scattering_rate` in `1/cm`. Historical water, graphite and
+uranium presets are not silently converted into these rates. Reference and
+legacy/educational data continue through their distinct existing adapters.
+No missing density, nuclear channel or unsupported energy profile is invented.
+
+Slab result cards display transmission, absorption, left escape and completed
+histories. Standard errors and marginal binomial intervals are read from the
+existing result rather than recalculated in the GUI. Censored results retain
+unavailable full-outcome estimates and intervals. All these uncertainties cover
+Monte Carlo sampling only; they omit uncertainty in reference parameters and
+model discrepancy. Reference limitations include free-gas treatment, isotropic
+scattering, no bound-atom thermal law, no energy redistribution, and a prescribed
+fixed spectrum for the averaged profile.
+
+### Spatial data and visualization limits
+
+Generation results provide real fission coordinates in `fiss_frames`; the heatmap
+histograms those points over the known spherical boundary projected onto X–Y.
+Its colorbar states the number of registered fissions per cell. This is neither
+a flux estimator nor a normalized material measurement. Changing display bins
+only rebins retained coordinates and does not rerun transport. The trajectories
+tab uses retained `path_frames`, explicitly labels their sampled size, preserves
+event types and offers optional generation playback. The former decorative
+circles representing nonexistent internal geometry are removed.
+
+The existing research wrapper deliberately excludes slab trajectories from its
+returned/exported experiment. Consequently slab heatmap/trajectory views show a
+data-unavailable explanation, rather than manufacturing spatial information or
+performing another run. Aggregate slab outcome charts remain available.
+
+### Worker, result snapshots and export
+
+Tk widget access stays on the GUI thread. The worker sends only a completed
+result/error/cancellation message. The existing generations callback publishes
+bounded, coalesced progress updates; it never manipulates widgets. Slab progress
+uses an indeterminate indicator because the existing public API has no progress
+callback. Stop remains cooperative at the existing generation/batch checkpoints;
+cancelled runs do not yield fabricated completed results. Only the selected tab
+needs a redraw, and repeated heatmap visits can reuse the binned result.
+
+Result presentation follows the saved run configuration, independently of
+subsequent form edits. Opening an experiment calls `load_slab_experiment()` on
+the existing bundle, preserves the complete loaded configuration for replay and
+locks its controls. A new experiment starts editable input. Replay retains
+the existing code/environment/backend checks, including for archives whose
+parameters extend beyond the one-layer configuration form.
+
+Research export calls `export_slab_experiment()` unchanged: a new directory
+receives `experiment.json`, `results.csv` and `arrays.npz`; the manifest and
+sidecar checks are preserved. The complete configuration, effective seed,
+source/profile metadata, estimates and statistical uncertainty remain in the
+existing schema. No pickle, new data format or trajectory archive is introduced.
+Generation results have no existing research-export schema, so their supported
+export is a plot rather than a misleading slab bundle. Separate unrun
+configuration persistence is not added. Selected scientific figures can be
+saved as PNG at 300 dpi with labels and legends included.
+
+### Verification scope
+
+The controller and renderers retain an Agg path for automated checks without a
+Tk window. This allows checks of source selection, worker integration, result
+snapshots, warnings, graph contents and export without claiming native visual
+coverage. Native Tk launch, resizing, operating-system scale and screenshot
+inspection are separate checks; their actual outcomes must be reported with the
+final verification results. No native or automated success is inferred merely
+from the existence of the new layout. These interface checks do not establish
+scientific validation of either transport model.
+
+### Executed workspace verification
+
+Full final suite with Numba: **324 passed, 2 subtests passed, 38.96 s**.
+Full Python fallback suite: **324 passed, 2 subtests passed, 303.86 s**.
+Both used external temporary directories with bytecode and pytest caches
+disabled. The added GUI tests cover real slab jobs, supported reference choices,
+missing graphite lineage, unknown/unavailable profiles, result/seed/SE/CI archive
+roundtrips, exact replay of a multilayer configuration with nondefault source
+position/direction/confidence, unavailable spatial data, refusal to animate
+missing samples, heatmap rebinning without numerical mutation or colorbar growth,
+and actual PNG export. Existing worker lifecycle and seeded legacy comparisons
+remain active. An early regression run had three failures because titles moved
+from centered to left aligned; assertions now inspect the left title and provide
+a saved sample when testing playback. No physical expected value was changed.
+
+Native Tk windows successfully launched at 1476x784 and 1366x768. The sandbox
+could not initialize the installed Tcl runtime; the explicitly approved native
+process outside that sandbox loaded it successfully. No dependency was installed
+and no Tcl path/package workaround was added to the application. A real desktop
+slab overview was inspected and saved as docs/gui_workspace.png. Computer Use
+was stopped by the user with physical Escape; further desktop interaction ceased.
+Consequently all-tab manual checking and Windows 125%/150% coverage remain
+incomplete. An attempted hidden-window layout check was inconclusive: withdrawn
+Tk children reported widths of one pixel, so it does not establish resize
+coverage. No operating-system scaling settings were changed. Process-level DPI
+awareness and adaptive grid/pack layouts are implemented, but are not evidence
+of complete multi-DPI verification.
+
+Loaded bundles are displayed as read-only archive summaries, including their
+full layer count and original source parameters. This prevents an editable
+one-layer form from misrepresenting a more general saved experiment. All source
+parameters, per-layer quality status and density provenance remain in Data.
+Matplotlib navigation labels/tooltips are localized without changing its internal
+Pan/Zoom action keys. Generation controls remain distinct from the executable
+nonreactive reference path.
+
+New implementation files: none. New retained artifact: the requested native
+screenshot. Existing gui.py, tests/test_physics.py, tests/test_regression.py,
+README.md and this audit were updated. Earlier pending reference documentation,
+source-catalog and memory-check-order changes were preserved. Numerical kernels,
+generation formulas, physical constants and research archive formats were not
+changed by this GUI task. Native testing remains partial; these successful tests
+establish software behavior within their stated scope, not physical validation.

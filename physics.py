@@ -772,9 +772,6 @@ def simulate_slab(layers, edges_cm, n_histories=10000, *, seed=None,
     if not isinstance(layers, (tuple, list)) or not layers:
         raise ValueError("layers must be a nonempty sequence of MaterialDataset")
     layers = tuple(layers)
-    if material_mode == "reference":
-        from material import resolve_reference_profile
-        profile = resolve_reference_profile(layers)
     samples = min(max_samples, n_histories)
     # Check before layer/source/scratch allocations, including owning path copies.
     required = 4096 + len(layers) * 4096 + samples * ((max_collisions + 2) * 16 + 256)
@@ -782,6 +779,9 @@ def simulate_slab(layers, edges_cm, n_histories=10000, *, seed=None,
         _integer("max_memory_bytes", max_memory_bytes)
         if required > max_memory_bytes:
             raise MemoryError(f"Slab storage estimate {required} exceeds max_memory_bytes={max_memory_bytes}")
+    if material_mode == "reference":
+        from material import resolve_reference_profile
+        profile = resolve_reference_profile(layers)
     rates = np.array([resolve_medium_rates(layer, mode=material_mode) for layer in layers], dtype=np.float64)
     raw_edges = np.asanyarray(edges_cm)
     if np.ma.isMaskedArray(raw_edges) or raw_edges.dtype.kind not in "iuf":

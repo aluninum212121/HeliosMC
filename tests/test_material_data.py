@@ -312,7 +312,8 @@ def test_offline_catalog_and_explicit_registration(tmp_path, monkeypatch):
     monkeypatch.setattr(socket, "create_connection", lambda *a, **kw: pytest.fail("network used"))
     catalog = load_source_catalog()
     assert set(catalog) == {"endfb-viii.1", "jeff-4.0", "jendl-5", "openmc-endfb-viii.1-njoy2016.78",
-        "exfor", "nist-ncnr-isotope-abundances-1992", "nist-srd69-reference-molar-masses", "iapws-sr6-08-2011-density"}
+        "exfor", "nist-ncnr-isotope-abundances-1992", "nist-srd69-reference-molar-masses", "iapws-sr6-08-2011-density",
+        "jendl-4.0-carbon-profile-summaries"}
     original_size = len(catalog)
     for library in catalog.values():
         assert library.availability_status == "known_source" and library.local_files == ()
@@ -633,7 +634,8 @@ def test_reference_profile_catalog_is_fresh_scoped_and_explicit():
     group = profiles[REFERENCE_MAXWELL_PROFILE]
     assert group["energy_bounds_ev"] == [1e-5, 10.]
     assert group["spectrum_kind"] == "flux_average" and group["spectrum_kT_ev"] == .0253
-    assert group["spectrum_temperature_K"] == pytest.approx(293.594308476915, rel=1e-12)
+    # Independently use the exact SI defining values of elementary charge/k_B.
+    assert group["spectrum_temperature_K"] == pytest.approx(.0253*1.602176634e-19/1.380649e-23, rel=1e-12)
     assert "Вода (H₂O)" in group["unavailable_materials"]
     group["energy_bounds_ev"][0] = 0.
     assert get_reference_profiles()[REFERENCE_MAXWELL_PROFILE]["energy_bounds_ev"] == [1e-5, 10.]
