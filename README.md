@@ -314,3 +314,48 @@ py -m benchmarks.benchmark_transport --variant current --educational --baseline-
 ```
 
 Recorded benchmark outputs are in `benchmarks/results/`. Architecture, physics notes, audit records, and performance reports are in `docs/`. See [the performance upgrade report](docs/PERFORMANCE_UPGRADE_REPORT.md) for measured comparisons and limitations.
+
+## MLP simulator-emulation research
+
+The separate [research script](benchmarks/ml_baseline.py) fits a small NumPy/SciPy
+MLP to total right-escape fractions from the existing reference-water slab.
+Only thickness varies (0.05–3 cm); the JENDL-5 0.0253-eV profile, 300 K water,
+normal incidence and transport approximation remain fixed. This does not
+validate real-water transport. Reference archives retain
+`eligible_for_training=False`; this explicitly labelled emulation study uses
+separate completeness/consistency checks and does not change the certified
+training subset in `physics.py`.
+
+No new dependencies are required. From the project root:
+
+```powershell
+py -B -m benchmarks.ml_baseline quick --output benchmarks/results/ml_baseline/quick_new
+py -B -m benchmarks.ml_baseline full --output benchmarks/results/ml_baseline/full_new
+py -B -m benchmarks.ml_baseline evaluate --output benchmarks/results/ml_baseline/full
+py -B -m benchmarks.ml_baseline predict --output benchmarks/results/ml_baseline/full --thickness 1.5
+```
+
+Use an available Python interpreter instead of `py` if the launcher is absent.
+For comparable timings, use a quiet CPU and set `OMP_NUM_THREADS=1` and
+`OPENBLAS_NUM_THREADS=1` in that process. Full mode runs a pilot first, then
+chooses 60–180 configurations according to its measured cost. Three independent
+20,000-history runs are pooled for each full-mode configuration. Quick mode
+uses 30 configurations and 2,000 histories per repeat. Model selection uses
+validation RMSE over fixed seeds; test groups remain held out.
+
+Completed results are never overwritten. An interrupted data-generation run
+can resume in the same directory with identical script/core hashes; completed
+ZIP bundles are reused. A partially written bundle or partial training-artifact
+write is not automatically repaired: preserve that directory and choose a new
+one. The output directory must belong to this research run. Evaluate and predict
+load numeric JSON weights and never retrain. `evaluate --dataset <directory>`
+accepts an independently generated archive after checking material/source
+compatibility and rejecting training/validation group overlap. Without that
+option it re-evaluates the originally held-out test, not a fresh experiment.
+
+The compact ZIP contains unchanged native JSON/CSV/NPZ exports; `dataset.csv`
+contains pooled counts-derived targets and MC uncertainties. Model, split,
+selection history, measurements, six PNG figures and tables accompany it.
+The raw ZIP is ignored by Git but retained locally. See
+[ML_RESEARCH_REPORT.md](docs/ML_RESEARCH_REPORT.md) for the measured results,
+limitations, artifact inventory and reproduction instructions.

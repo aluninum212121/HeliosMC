@@ -2203,3 +2203,57 @@ source-catalog and memory-check-order changes were preserved. Numerical kernels,
 generation formulas, physical constants and research archive formats were not
 changed by this GUI task. Native testing remains partial; these successful tests
 establish software behavior within their stated scope, not physical validation.
+
+## MLP simulator-emulation study (2026-11-13)
+
+The audit found reusable frozen slab configurations, complete outcome estimates,
+physical `group_id` values independent of seed/history count, and checked native
+JSON/CSV/NPZ exports. No existing script performed surrogate fitting. The new
+`benchmarks/ml_baseline.py` is an isolated research script using approved NumPy,
+SciPy and Matplotlib only. Training and saved-model prediction are separate CLI
+modes; it does not change physics, material data, GUI or public transport APIs.
+
+The single feature is water-slab thickness, 0.05–3 cm, at the unchanged JENDL-5
+0.0253-eV/300-K reference profile and normal incidence. The target is total right
+escape, including scattered histories. Constant material/source quantities and
+run metadata are not fitted features. The native reference archive deliberately
+retains `eligible_for_training=False`: this separate, explicitly labelled
+simulator-emulation study does not change `split_slab_groups` or promote data
+into its mathematically certified training subset. Scientific validation remains
+`not_established`. Source-checking nuclear parameters does not validate transport.
+
+A pilot preceded the full dataset of 180 configurations, three independent
+20,000-history runs each (10.8 million histories). Native exports are retained
+inside one ZIP and reloaded through the existing validators. Pooling uses total
+successes/total histories; MC uncertainty and empirical replicate SEM are distinct.
+Groups split 126/27/27 before model choice; scaling fits train only. Four small
+MLP settings and fixed seeds 17/29/43 were compared on validation. The selected
+1–16–8–1 tanh network converged in 1339 L-BFGS iterations. Test RMSE was
+0.00174760, versus 0.05723318 for the selected linear baseline and 0.19242385
+for Dummy. Three-seed test RMSE ranged 0.00173926–0.00174760; these are
+conditional simulator-emulation results, not physical validation.
+
+All 540 native export roundtrips, model serialization, repeated training and
+independent CLI evaluate/predict checks succeeded. The full suite passed:
+360 tests, 2 subtests, 1 opt-in native GUI skip, 34.84 s. Twenty-nine new ML
+tests include finite-difference gradient checking, input validation, group
+separation, train-only scaling and real reference export integration. Temporary
+directories for the full suite were external and cleaned. The six actual PNG
+figures were visually inspected. No new full fallback/native GUI run was needed
+for the unchanged application code and none is claimed.
+
+Measured warm single-request speedup was 194.75 relative to the public MC API
+with 20,000 histories at 1.5 cm (101.75 relative to its transport timer). Setup
+accounting gives conditional break-even estimates of 724 requests for simulation
+plus selected fit, or 10,004 including measured pilot/export/search/repeated fit.
+The latter still excludes final ZIP aggregation, plotting, tests and human work;
+accuracy-equivalent savings are not established. Full methods, individual timing
+repeats, limitations and artifact inventory are in
+[ML_RESEARCH_REPORT.md](ML_RESEARCH_REPORT.md) and
+`benchmarks/results/ml_baseline/{quick,full}/`.
+
+Added source files: the research script and `tests/test_ml_baseline.py`.
+Added documentation: the requested research report. README and this audit were
+updated, and `.gitignore` excludes the retained raw ZIP bundles from automatic
+Git addition. No dependencies, deletions, commit or push. Earlier user changes
+to GUI, tests, documentation and research-demo artifacts were preserved.

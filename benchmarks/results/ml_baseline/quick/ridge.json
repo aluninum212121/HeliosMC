@@ -1,0 +1,30 @@
+{
+  "schema": "water_slab_surrogate_v1",
+  "kind": "ridge",
+  "features": [
+    "thickness_cm"
+  ],
+  "target": "escaped_right_fraction",
+  "domain": [
+    0.05,
+    3.0
+  ],
+  "mean": [
+    1.5919433547269344
+  ],
+  "scale": [
+    0.8584726060510238
+  ],
+  "alpha": 0.0,
+  "seed": 17,
+  "preprocessing_seconds": 8.939999679569155e-05,
+  "train_min": 0.06809352978330149,
+  "train_max": 2.9658118722639593,
+  "coefficients": [
+    -0.18693314698024183,
+    0.3744924242424241
+  ],
+  "success": true,
+  "iterations": 1,
+  "training_seconds": 0.0002800000074785203
+}

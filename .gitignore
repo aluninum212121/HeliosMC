@@ -24,3 +24,6 @@ htmlcov/
 
 # Logs
 *.log
+
+# Reproducible ML raw experiment bundles (retained locally, not auto-added)
+benchmarks/results/ml_baseline/**/experiments.zip

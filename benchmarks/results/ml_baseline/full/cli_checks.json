@@ -1,0 +1,22 @@
+{
+  "predict": {
+    "thickness_cm": 1.5,
+    "transmission": 0.32972161544684164,
+    "profile": "jendl5_point_0p0253ev",
+    "scope": "simulator emulation, not physical validation"
+  },
+  "evaluate": {
+    "n": 27,
+    "metrics": {
+      "mae": 0.0014440924978660712,
+      "rmse": 0.001747600689754603,
+      "r2": 0.9999175044966785,
+      "max_absolute_error": 0.003415191510858673,
+      "bias": 0.0003338344346007504,
+      "outside_fraction": 0
+    },
+    "retrained": false
+  },
+  "saved_model_unchanged": true,
+  "model_sha256": "3504dae26f369a7e7cbb9fd83c5a99f8b4af5b0456c83e595cf5518172dc83ac"
+}
