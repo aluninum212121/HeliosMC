@@ -1,9 +1,0 @@
-{
-  "current_generation_wall_seconds": 76.69382960000075,
-  "wall_scope": "current generation invocation incl export/reload; on resume may omit previous invocation",
-  "simulation_seconds": 5.336245100115775,
-  "transport_seconds": 2.849308500168263,
-  "excluded_records": [],
-  "records": 540,
-  "groups": 180
-}

@@ -21,14 +21,14 @@ parser.add_argument('--variant', choices=['baseline', 'current'], required=True)
 parser.add_argument('--fallback', action='store_true')
 parser.add_argument('--output', required=True)
 parser.add_argument('--educational', action='store_true', help='Compare abstract absorption and preserved legacy path')
-parser.add_argument('--baseline-source', default='benchmarks/results/baseline_physics.txt')
+parser.add_argument('--baseline-source', default='benchmarks/fixtures/baseline_physics.txt')
 args = parser.parse_args()
 if args.fallback:
     sys.modules['numba'] = None
 import numpy as np
 from material import Material
 
-source_path = Path('benchmarks/results/baseline_physics.txt' if args.variant == 'baseline' else 'physics.py')
+source_path = Path('benchmarks/fixtures/baseline_physics.txt' if args.variant == 'baseline' else 'physics.py')
 source = source_path.read_bytes()
 module = types.ModuleType('measured_physics')
 sys.modules[module.__name__] = module

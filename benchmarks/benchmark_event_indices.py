@@ -10,7 +10,7 @@ import types
 from material import Material
 import numpy as np
 
-source = Path('benchmarks/results/secondary_stage_physics.txt').read_text(encoding='utf-8-sig')
+source = Path('benchmarks/fixtures/secondary_stage_physics.txt').read_text(encoding='utf-8-sig')
 candidate_source = source.replace('fission_positions.append(positions[i].copy())',
                                   'fission_positions.append(i)')
 candidate_source = candidate_source.replace('pos, dirs, fates, fiss, paths, lengths = out',

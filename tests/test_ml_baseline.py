@@ -226,7 +226,7 @@ def test_v2_model_schema_tampering(tmp_path,multivariate_data,change):
 
 
 def test_v1_saved_model_still_predicts():
-    path=ml.ROOT/"benchmarks/results/ml_baseline/full/mlp.json"
+    path=ml.ROOT/"tests/fixtures/water_slab_surrogate_v1.json"
     model=ml.load_model(path)
     assert ml.predict(model,[[1.5]])[0]==pytest.approx(.32972161544684164,abs=1e-14)
     with pytest.raises(ValueError): ml.predict(model,[[1.5,.5,1.]])

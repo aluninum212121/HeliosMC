@@ -9,7 +9,7 @@ import types
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--fallback', action='store_true')
-parser.add_argument('--baseline-source', default='benchmarks/results/baseline_physics.txt',
+parser.add_argument('--baseline-source', default='benchmarks/fixtures/baseline_physics.txt',
                     help='Exact pre-change physics.py snapshot to compare')
 parser.add_argument('--output', help='Results path; defaults to the historical confirmation path')
 args = parser.parse_args()

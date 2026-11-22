@@ -199,7 +199,7 @@ def test_warning_survives_later_complete_generations():
 def baseline():
     module = types.ModuleType('upgrade_test_baseline')
     sys.modules[module.__name__] = module
-    source = Path('benchmarks/results/baseline_physics.txt').read_bytes()
+    source = Path('benchmarks/fixtures/baseline_physics.txt').read_bytes()
     exec(compile(source, '<pre-upgrade working tree>', 'exec'), module.__dict__)
     return module
 

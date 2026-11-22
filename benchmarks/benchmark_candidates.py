@@ -9,7 +9,7 @@ import types
 
 import numpy as np
 
-source = Path('benchmarks/results/baseline_physics.txt').read_text(encoding='utf-8-sig')
+source = Path('benchmarks/fixtures/baseline_physics.txt').read_text(encoding='utf-8-sig')
 reference = types.ModuleType('candidate_reference')
 sys.modules[reference.__name__] = reference
 exec(compile(source, '<candidate reference>', 'exec'), reference.__dict__)

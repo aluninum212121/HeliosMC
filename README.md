@@ -110,10 +110,18 @@ right boundary of a synthetic slab using three inputs:
 The full experiment contains 900 configurations, each with three Monte Carlo
 replicates of 8,000 histories. Data are split by configuration so that
 replicates from one configuration cannot appear in both training and test
-sets. The dataset, JSON models, metrics, and figures are in
-[`benchmarks/results/ml_multivariate_v2/full/`](benchmarks/results/ml_multivariate_v2/full/).
+sets. The generated dataset, JSON models, and metrics are local research outputs and are
+not included in Git. They are written under the ignored
+`benchmarks/results/ml_multivariate_v2/full/` directory. Selected figures used in
+the report are retained in `docs/figures/ml_study/`.
 
-Predict with the saved model without retraining:
+Generate the full study locally first; the run may take substantial time:
+
+```powershell
+python -B -m benchmarks.ml_baseline full --schema v2 --output benchmarks/results/ml_multivariate_v2/full --budget-seconds 300
+```
+
+Once it completes, predict with the saved model without retraining:
 
 ```powershell
 python -B -m benchmarks.ml_baseline predict --output benchmarks/results/ml_multivariate_v2/full --thickness 1.5 --absorption-rate 0.4 --scattering-rate 1.0
@@ -131,11 +139,10 @@ diagnostics have separate execution limits. The
 full study, evaluation, and resuming interrupted runs. Methodology and
 measured results are in [ML_RESEARCH_REPORT.md](docs/ML_RESEARCH_REPORT.md).
 
-Compact results and full JSON models are included in the repository. Raw
-experiment ZIP archives and large checkpoints remain local and are excluded
-from Git. The `predict` command uses the JSON model; `evaluate` also requires
-`experiments.zip`. Generate a new dataset in a separate output directory using
-the reproducibility guide.
+Generated benchmark and ML outputs are excluded from Git and remain in the local
+`benchmarks/results/` directory. The `predict` command uses the JSON model;
+`evaluate` also requires `experiments.zip`. Generate a new dataset in a separate
+output directory using the reproducibility guide.
 
 ## Limitations and reproducibility
 
@@ -173,10 +180,8 @@ python -B -m pytest tests/test_physics.py::test_gui_native_material_bindings_tab
 ```
 
 Performance measurements and their limitations are documented in the
-[performance report](docs/PERFORMANCE_UPGRADE_REPORT.md). The frozen
-`baseline_physics.txt` is required by regression tests; `secondary_stage_physics.txt`
-is used for the historical event-storage comparison. Neither file is imported
-by the application.
+[performance report](docs/PERFORMANCE_UPGRADE_REPORT.md). Frozen source snapshots required by regression tests and benchmark comparisons
+are kept in `benchmarks/fixtures/`. Neither file is imported by the application.
 
 ## License
 
@@ -195,5 +200,6 @@ HeliosMC is distributed under the [MIT License](LICENSE).
 | `simulation_worker.py` | Background execution and cooperative cancellation |
 | `tests/` | Regression, mathematical, and integration tests |
 | `benchmarks/` | Performance measurements and ML study |
-| `benchmarks/results/` | Saved measurements and research results |
+| `benchmarks/fixtures/` | Frozen source snapshots used by tests and benchmarks |
+| `docs/figures/` | Figures included in the research report |
 | `docs/` | Model, data provenance, reports, and documentation |

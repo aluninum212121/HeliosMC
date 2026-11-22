@@ -2,9 +2,11 @@
 
 Historical measurements from 2026-10-30. These results describe the recorded
 source snapshots and hardware, not fresh timings of every subsequent revision.
+Generated benchmark JSON is kept locally under the ignored `benchmarks/results/`
+directory; the measurements summarized here remain in this report.
 
 The pre-upgrade source is retained as
-`benchmarks/results/baseline_physics.txt`, SHA256
+`benchmarks/fixtures/baseline_physics.txt`, SHA256
 `98d5df40ee21d46dde248d8902c3eeb5aa22db0f761ea48035764e478475caa4`.
 The snapshot supports benchmarks and exact compatibility regressions;
 it is not an application module.
@@ -132,7 +134,7 @@ not controlled. Baseline benchmark work overlapped some validation work; benchma
 jobs themselves were sequential. Treat small timing differences as inconclusive.
 Only robust end-to-end benefits warrant retention. Earlier v0.2 measurements were not substituted for this dataset.
 
-`benchmarks/results/secondary_stage_physics.txt` and `secondary_stage_*.json` preserve the intermediate
+`benchmarks/fixtures/secondary_stage_physics.txt` and `secondary_stage_*.json` preserve the intermediate
 source-batching stage (physics hash
 `c2d5d5c02be59297efd5bb6337e9678de52117e1c1b326900a94a64a16b81939`).
 The integer-event experiment uses that fixed source, so it remains reproducible
