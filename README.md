@@ -33,7 +33,7 @@ HeliosMC предназначен для обучения и исследова�
 
 ```powershell
 python -m venv .venv
-.venv\Scripts\python -m pip install -r requirements.txt
+.venv\Scripts\python -m pip install numpy scipy matplotlib
 .venv\Scripts\python main.py
 ```
 
@@ -41,7 +41,7 @@ python -m venv .venv
 отдельным системным пакетом. Если команда `python` недоступна в Windows,
 используйте установленный интерпретатор или launcher `py`.
 
-`requirements.txt` содержит NumPy, SciPy и Matplotlib. Numba необязательна:
+Основные пакеты — NumPy, SciPy и Matplotlib. Numba необязательна:
 без неё используется Python/NumPy. Для ускорения и запуска тестов:
 
 ```powershell
