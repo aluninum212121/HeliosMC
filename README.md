@@ -33,7 +33,7 @@ From the project root:
 
 ```powershell
 python -m venv .venv
-.venv\Scripts\python -m pip install numpy scipy matplotlib
+.venv\Scripts\python -m pip install -r requirements.txt
 .venv\Scripts\python main.py
 ```
 
@@ -41,17 +41,13 @@ On Linux or macOS, use `.venv/bin/python`. Tkinter may need to be installed
 as a system package. On Windows, use your installed interpreter or the `py`
 launcher if the `python` command is unavailable.
 
-NumPy, SciPy, and Matplotlib are the core dependencies. Numba is optional; the
-application falls back to Python/NumPy when Numba is unavailable. To enable
-acceleration and run the test suite:
-
-```powershell
-.venv\Scripts\python -m pip install numba pytest
-```
-
-Numba accelerates supported calculations; the first call includes JIT
-compilation. The desktop interface uses the standard Tkinter/ttk widgets and
-Matplotlib TkAgg backend.
+The pinned `requirements.txt` records the versions used for the saved study;
+it includes NumPy, SciPy, Matplotlib, Numba, and pytest. For a minimal runtime
+installation, use `python -m pip install numpy scipy matplotlib`. Numba is
+optional at runtime: the application falls back to Python/NumPy when it is
+unavailable. When enabled, Numba accelerates supported calculations; the first
+call includes JIT compilation. The desktop interface uses the standard
+Tkinter/ttk widgets and Matplotlib TkAgg backend.
 
 ## Using the interface
 
@@ -181,6 +177,10 @@ Performance measurements and their limitations are documented in the
 `baseline_physics.txt` is required by regression tests; `secondary_stage_physics.txt`
 is used for the historical event-storage comparison. Neither file is imported
 by the application.
+
+## License
+
+HeliosMC is distributed under the [MIT License](LICENSE).
 
 ## Project structure
 
