@@ -1,11 +1,5 @@
-"""
-БЛОК 0 — ОБЩИЙ: совместимость с Numba.
+"""Optional Numba acceleration with a compatible Python decorator fallback."""
 
-Единая точка истины для HAS_NUMBA и декоратора-фолбэка njit,
-чтобы остальные ветки (physics.py, gui.py) не дублировали этот код.
-"""
-
-# Попытка импорта Numba; если не установлена, используем Python-версию
 try:
     from numba import njit
     HAS_NUMBA = True

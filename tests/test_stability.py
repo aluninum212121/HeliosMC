@@ -169,6 +169,7 @@ def test_cancel_checkpoint():
 
 def test_gui_completion_failure_cancellation_and_render(tmp_path):
     app = NeutronSimGUI(show=False)
+    app._set('scenario', app.SCENARIOS[0])
     main_thread = get_ident()
     result = estimate_k_full(n_gen=3, seed=6, max_samples_per_gen=0)
     called = []
@@ -244,6 +245,7 @@ assert all(not p for p in y['path_frames'])
 
 def test_close_requests_worker_shutdown():
     app = NeutronSimGUI(show=False)
+    app._set('scenario', app.SCENARIOS[0])
     entered = Event()
     def job(cancel_event, **config):
         entered.set()
@@ -267,6 +269,7 @@ def test_worker_start_failure_and_gui_render_failure():
             worker.start(lambda **kw: None)
     assert worker.state == ExecutionState.FAILED
     app = NeutronSimGUI(show=False)
+    app._set('scenario', app.SCENARIOS[0])
     try:
         result = estimate_k_full(n_gen=1, seed=1)
         with patch('gui.estimate_k_full', return_value=result):

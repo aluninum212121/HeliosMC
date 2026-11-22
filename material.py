@@ -1,9 +1,4 @@
-"""
-БЛОК 2 — МАТЕРИАЛЫ.
-
-Material, встроенные материалы и проверяемая схема структурированных данных.
-Соответствует БЛОКУ 2 исходного монолита.
-"""
+"""Material properties, structured datasets and source-documented reference profiles."""
 
 
 import math
@@ -629,7 +624,6 @@ class Material:
             raise ValueError("density, molar_mass and total cross section must be positive")
 
     def sigma_total(self):
-        # ИСПРАВЛЕНИЕ: Теперь полное сечение включает деление (sigma_f)
         return self.sigma_f + self.sigma_a + self.sigma_s
 
     def macro_total(self):

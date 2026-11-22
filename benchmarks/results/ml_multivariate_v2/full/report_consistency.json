@@ -1,0 +1,14 @@
+{
+  "status": "passed",
+  "tables": 13,
+  "comparison_metrics_checked": 20,
+  "report_sha256": "a4a62b2f70be10d06b926af28b3fbd82d77a19a3eb4ba03eef2822691dee5a46",
+  "sources": {
+    "metrics.json": "afbc547c0939e12b4ac41ea2a1e5a7c8d9d5a3e8f5ac1785bb90071823433341",
+    "comparison.csv": "85de58ea4f1d76a0145f997206a6698380b1e814587d700bc8740583d148b3cb",
+    "timing.json": "2d2ec97f406dac795df8ae9234039a209a56d2f3ba23e6b11d9496be0220e77a",
+    "selection.json": "df9d71f40a434dc601157868ab7402ae4fe708bd3e661b11dda064e0a45e749e",
+    "report_tables.json": "f56fe86f264f2452cbbd4ea713b441c55e265178e8ead552a0f4337289d4c3fe"
+  },
+  "scope": "exact generated table blocks and comparison.csv against metrics.json; narrative reviewed separately"
+}

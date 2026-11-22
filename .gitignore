@@ -27,3 +27,17 @@ htmlcov/
 
 # Reproducible ML raw experiment bundles (retained locally, not auto-added)
 benchmarks/results/ml_baseline/**/experiments.zip
+benchmarks/results/ml_multivariate_v2/**/experiments.zip
+benchmarks/results/ml_multivariate_v2/**/diagnostic_experiments.zip
+benchmarks/results/ml_multivariate_v2/**/training_trials.json
+benchmarks/results/ml_multivariate_v2/**/study_models.json
+
+# Local smoke runs; full research datasets remain versioned
+benchmarks/results/ml_baseline/quick*/
+benchmarks/results/ml_multivariate_v2/quick*/
+
+# Private keys and local credentials
+*.pem
+*.key
+credentials.json
+token.json

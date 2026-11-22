@@ -1,0 +1,15 @@
+{
+  "exit_code": 0,
+  "wall_seconds": 104.28941610001493,
+  "passed_test_calls": 398,
+  "failed_test_calls": 0,
+  "skipped": 1,
+  "scope": "full repository suite; native GUI opt-in remains separate",
+  "command": "pytest -q -p no:cacheprovider --basetemp <external TemporaryDirectory>",
+  "dependencies_added": [],
+  "passed_tests": 396,
+  "passed_subtests": 2,
+  "pytest_reported_seconds": 103.11,
+  "passed_test_calls_note": "includes two successful subtest reports",
+  "pytest_summary": "396 passed, 1 skipped, 2 subtests passed"
+}

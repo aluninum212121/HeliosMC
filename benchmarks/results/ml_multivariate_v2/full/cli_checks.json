@@ -1,0 +1,36 @@
+{
+  "predict": {
+    "inputs": {
+      "thickness_cm": 1.5,
+      "absorption_rate": 0.4,
+      "scattering_rate": 1.0
+    },
+    "transmission": 0.23200901697878007,
+    "schema": "synthetic_slab_surrogate_v2",
+    "scope": "synthetic educational simulator emulation"
+  },
+  "predict_outside": {
+    "rejected": true
+  },
+  "evaluate": {
+    "n": 135,
+    "metrics": {
+      "mae": 0.005951729650583468,
+      "rmse": 0.008466724347180475,
+      "r2": 0.9987791418671133,
+      "max_absolute_error": 0.04806205909960887,
+      "bias": 0.0008963046927101489,
+      "outside_fraction": 4,
+      "out_of_range_fraction": 0.02962962962962963
+    },
+    "retrained": false
+  },
+  "legacy_v1_predict": {
+    "thickness_cm": 1.5,
+    "transmission": 0.32972161544684164,
+    "profile": "jendl5_point_0p0253ev",
+    "scope": "simulator emulation, not physical validation"
+  },
+  "model_unchanged": true,
+  "model_sha256": "941bdbac394672ebe46e6bf186148be47664f0a1a87d0d106e26d8564fcb0284"
+}

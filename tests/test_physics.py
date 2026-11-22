@@ -320,5 +320,203 @@ def test_gui_heatmap_resolution_and_plot_export_preserve_numerics(experiment_gui
         np.testing.assert_array_equal(after, before)
 
 
+def test_gui_default_is_educational_slab_with_three_workspace_sections(experiment_gui):
+    app = experiment_gui
+    assert app._get("scenario") == app.SCENARIOS[1]
+    assert app._get("material_mode") == "Учебная среда"
+    assert tuple(app.TAB_NAMES) == ("overview", "visualization", "data")
+    assert app.available_visualizations == ()
+    assert len(app.figures) == 2
+    assert len({title for title, _, _ in app.cards}) == 4
+
+
+def test_gui_outcome_chart_has_one_tick_per_category(experiment_gui):
+    app = experiment_gui
+    app.result_scenario = "slab"
+    app.result = {"outcome_counts": dict(absorbed=790, escaped_left=0,
+        escaped_right=1210, collision_limit=0, numeric_limit=0)}
+    app._draw_overview()
+    app.fig.canvas.draw()
+    assert len(app.ax_bar.get_xticks()) == 3
+    assert [label.get_text() for label in app.ax_bar.get_xticklabels()] == [
+        "Поглощены", "Вышли\nслева", "Прошли\nслой"]
+    assert [bar.get_height() for bar in app.ax_bar.patches] == [790, 0, 1210]
+
+
+def test_gui_compact_overview_legend_does_not_cover_axis_labels(experiment_gui):
+    app = experiment_gui
+    app.result_scenario = "generations"
+    app.result = estimate_k_full(n_gen=2, n_source=80, seed=1402, max_samples_per_gen=0)
+    app.fig.set_size_inches(8, 2.8)
+    for _ in range(3):
+        app._draw_overview()
+        app.fig.canvas.draw()
+        assert len(app.fig.legends) == 1
+        renderer = app.fig.canvas.get_renderer()
+        legend = app.fig.legends[0].get_window_extent(renderer)
+        assert not legend.overlaps(app.ax_k.xaxis.label.get_window_extent(renderer))
+        assert not legend.overlaps(app.ax_k.get_window_extent(renderer))
+    app.graph_kind = "Частицы по поколениям"
+    app._draw_overview()
+    assert not app.fig.legends
+
+
+def test_gui_material_selections_survive_scenario_switches_independently(experiment_gui):
+    app = experiment_gui
+    legacy = list(MATERIALS)[1]
+    app._set("legacy_material", legacy)
+    app._set("slab_material", "Графит")
+    for scenario in (app.SCENARIOS[0], app.SCENARIOS[1], app.SCENARIOS[0]):
+        app._set("scenario", scenario)
+        app._on_scenario_change()
+        assert app._get("legacy_material") == legacy
+        assert app._get("slab_material") == "Графит"
+    app._set("material", list(MATERIALS)[0])  # Earlier caller API targets only the active scenario.
+    assert app._get("slab_material") == "Графит"
+
+
+def test_gui_edited_form_and_validation_error_keep_original_result_snapshot(experiment_gui):
+    app = experiment_gui
+    set_slab_inputs(app)
+    app._on_run()
+    app.worker.thread.join(timeout=60)
+    app._poll_worker()
+    assert app.execution_state == ExecutionState.COMPLETED
+    original = deepcopy(app.experiment)
+    original_width = app._get("width")
+    app._set("width", "3.5")
+    assert app.form_dirty
+    assert "предыдущий запуск" in app.result_caption
+    assert app.experiment == original
+    app._set("width", original_width)
+    assert not app.form_dirty
+    app._set("histories", "not-an-integer")
+    app._on_run()
+    assert app.last_error
+    assert app.experiment == original
+    assert app.result == original["result"]
+    assert app.btn_run.active
+    app._set("scenario", app.SCENARIOS[0])
+    assert app.form_dirty
+    assert app.result_scenario == "slab"
+    assert app.available_visualizations == ()
+
+
+def test_gui_visualization_is_driven_by_stored_samples_and_rendered_on_demand(experiment_gui):
+    app = experiment_gui
+    app.result = estimate_k_full(n_gen=2, n_source=80, seed=1402, max_samples_per_gen=4)
+    app.result_scenario = "generations"
+    app.result_radius = 25.
+    assert set(app.available_visualizations) == {"heatmap", "trajectories"}
+    app._dirty_tabs = set(app.TAB_NAMES)
+    with patch.object(app, "_draw_heatmap", wraps=app._draw_heatmap) as draw_map:
+        app._render_tab("overview")
+        draw_map.assert_not_called()
+        app.visual_kind = "heatmap"
+        app._render_tab("visualization")
+        app._render_tab("visualization")
+        assert draw_map.call_count == 1
+    app.result["fiss_frames"] = []
+    assert app.available_visualizations == ("trajectories",)
+    app.result["path_frames"] = []
+    assert app.available_visualizations == ()
+
+
+def test_gui_slab_rejects_spatial_png_and_reset_restores_clean_form(experiment_gui, tmp_path):
+    app = experiment_gui
+    set_slab_inputs(app)
+    app._on_run()
+    app.worker.thread.join(timeout=60)
+    app._poll_worker()
+    for name in ("heatmap", "trajectories", "visualization"):
+        with pytest.raises(ValueError):
+            app.save_plot(tmp_path / f"{name}.png", tab=name)
+    assert not list(tmp_path.iterdir())
+    app._set("absorption", "1.5")
+    assert app.form_dirty
+    app.new_experiment()
+    assert app.result is app.experiment is app.result_inputs is None
+    assert not app.form_dirty
+    assert app.available_visualizations == ()
+    assert app._get("scenario") == app.SCENARIOS[1]
+
+
+@pytest.mark.skipif(os.environ.get("HELIOSMC_NATIVE_GUI_TESTS") != "1",
+                    reason="Opt-in native Tk test requires an interactive desktop")
+def test_gui_native_material_bindings_tab_restore_seed_viewer_and_resize(tmp_path):
+    app = NeutronSimGUI(show=False, native=True)
+    try:
+        app.root.update()
+        assert app.variables["legacy_material"] is not app.variables["slab_material"]
+        assert app.notebook.tab(app.pages["visualization"], "state") == "hidden"
+        app._set("slab_material", "Графит")
+        app._set("scenario", app.SCENARIOS[0])
+        app._on_scenario_change()
+        large_seed = str(2**128-1)
+        for name, value in dict(seed=large_seed, source="80", generations="2", samples="4").items():
+            app._set(name, value)
+        assert app._get("slab_material") == "Графит"
+        assert app._get("legacy_material") == next(iter(MATERIALS))
+        app._on_run()
+        assert app.action_buttons["run"].instate(["disabled"])
+        assert app.action_buttons["cancel"].instate(["!disabled"])
+        app.worker.thread.join(timeout=60)
+        app._poll_worker()
+        app.root.update()
+        assert app.execution_state == ExecutionState.COMPLETED
+        assert app.notebook.tab(app.pages["visualization"], "state") == "normal"
+        assert app.action_buttons["run"].instate(["!disabled"])
+        assert app.action_buttons["cancel"].instate(["disabled"])
+        for width, height in ((1366, 768), (1920, 1080)):
+            app.root.geometry(f"{width}x{height}+0+0")
+            app.root.update()
+            for button in app.action_buttons.values():
+                x = button.winfo_rootx()-app.root.winfo_rootx()
+                assert button.winfo_ismapped()
+                assert 0 <= x < x+button.winfo_width() <= app.root.winfo_width()
+            for page in ("visualization", "overview", "data"):
+                app.notebook.select(app.pages[page])
+                app.root.update()
+                assert app.active_tab == page
+                if page == "visualization":
+                    figure = app.figures[page]
+                    canvas = figure.canvas
+                    np.testing.assert_allclose(figure.bbox.size,
+                        [canvas.get_tk_widget().winfo_width(), canvas.get_tk_widget().winfo_height()], atol=1)
+                    for ax in figure.axes:
+                        if ax.get_visible():
+                            bounds = ax.get_tightbbox(canvas.get_renderer())
+                            assert bounds.x0 >= 0 and bounds.y0 >= 0
+                            assert bounds.x1 <= figure.bbox.x1 and bounds.y1 <= figure.bbox.y1
+        seed_row = next(row for row in app.data_tree.get_children()
+                        if app.data_tree.item(row, "values")[0] == "Seed")
+        app.data_tree.selection_set(seed_row)
+        app._show_data_row()
+        assert large_seed in app.cell_details.get("1.0", "end")
+        history = list(app.result["k_history"])
+        image_path = tmp_path / "native-overview.png"
+        app.save_plot(image_path, tab="overview")
+        assert image_path.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+        assert app.result["k_history"] == history
+        app.notebook.select(app.pages["visualization"])
+        app.root.update()
+        app.visual_var.set("Траектории")
+        app._visual_changed()
+        app.root.update()
+        visual = app.figures["visualization"]
+        np.testing.assert_allclose(visual.bbox.size,
+            [visual.canvas.get_tk_widget().winfo_width(), visual.canvas.get_tk_widget().winfo_height()], atol=1)
+        renderer = visual.canvas.get_renderer()
+        for legend in visual.legends:
+            assert not legend.get_window_extent(renderer).overlaps(app.ax_main.xaxis.label.get_window_extent(renderer))
+        print(f"Native Tk: {app.root.winfo_fpixels('1i'):.1f} px/in; tested client sizes 1366x768 and 1920x1080")
+        app.new_experiment()
+        app.root.update()
+        assert app.notebook.tab(app.pages["visualization"], "state") == "hidden"
+        assert app._get("scenario") == app.SCENARIOS[1]
+    finally:
+        app._on_close()
+
+
 if __name__ == "__main__":
     unittest.main()

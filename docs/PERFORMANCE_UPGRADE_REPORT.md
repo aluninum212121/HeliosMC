@@ -1,42 +1,16 @@
-# HeliosMC reliability and performance upgrade
+# HeliosMC: reliability and performance measurements
 
-Date: 2026-10-30 (Asia/Tashkent).
+Historical measurements from 2026-10-30. These results describe the recorded
+source snapshots and hardware, not fresh timings of every subsequent revision.
 
-## Scope and starting state
-
-The authoritative baseline is the **working tree**, not Git HEAD. HEAD was
-`bc110a8f9f2262c08da66b5d54bcab078de09607`. Initial user edits were present in
-README.md, gui.py, material.py, neutron.py and physics.py. The audit, old benchmark
-script/results, debug.log and verification_gui_v02.png were untracked. These edits
-were preserved. Material, standalone particle, worker, compatibility module, entry
-point and legacy monolith have not been edited by this upgrade. No commit or push
-was made.
-
-Read docs/ARCHITECTURE_AUDIT.md, all modular sources, existing tests and benchmark,
-README, prior debug report, working-tree diff, and the four-commit Git history.
-No substantive architecture change since the audit was found: the main engine
-already uses separate `(N,3)` float64 position/direction arrays and Numba loops;
-Neutron objects and the legacy monolith are outside the main transport path.
-Sampled paths, explicit fate -1, worker states, cancellation boundaries, public
-input copies, seeded transport, and whole-generation accounting already existed.
-The recent commit tracked worker/tests/report while several corresponding source
-changes remained uncommitted; benchmarking HEAD would misidentify the baseline.
-
-The exact pre-upgrade physics source is retained as
+The pre-upgrade source is retained as
 `benchmarks/results/baseline_physics.txt`, SHA256
 `98d5df40ee21d46dde248d8902c3eeb5aa22db0f761ea48035764e478475caa4`.
-It is a benchmark/reference fixture, not an application module.
+The snapshot supports benchmarks and exact compatibility regressions;
+it is not an application module.
 
-Files changed by this work: `physics.py`, `gui.py`, `README.md`. Added:
-`tests/test_regression.py`, `benchmarks/benchmark_transport.py`,
-`benchmarks/benchmark_candidates.py`, `benchmarks/benchmark_report.py`,
-`benchmarks/benchmark_confirmation.py`, `benchmarks/benchmark_event_indices.py`,
-this report, and `benchmarks/results/` source snapshot, measured
-JSON records and GUI verification image. The existing audit and v0.2 artifacts
-were left intact. An empty AGENTS.md appeared during the run; it was read and
-left intact.
+## Estimator and completion contract
 
-## Initial correctness problem and estimator contract
 
 The existing arithmetic reconciles all outcomes, but arithmetic consistency does
 not establish a physically valid estimator. A step-limited particle has no known
@@ -65,9 +39,7 @@ SimulationCancelled. Neither returns a misleading completed partial result.
 The GUI reports the compatible value as a source ratio, labels the generation
 spread explicitly, warns if **any** generation has unfinished histories, and
 withholds criticality classification and configuration advice in that case.
-Empty runs display no estimate. Status-panel spacing was corrected so the warning
-remains visible. `docs/completion_warning.png` was rendered with Agg and
-visually inspected. Native desktop event-loop responsiveness was not measured.
+Empty runs display no estimate. Native desktop event-loop responsiveness was not measured in this benchmark.
 
 ## Focused implementation changes
 
@@ -135,7 +107,9 @@ assumption or seeded-stream change was required or approved.
   the public list-of-owning-arrays contract. This measures the compatibility cost
   rather than silently changing the result type.
 
-Reproduce from the repository root with the project's Numba-capable interpreter:
+The historical harness commands below write the named benchmark outputs.
+Use a separate working copy to retain the published measurements unchanged.
+Run from its repository root with a Numba-capable interpreter:
 
 ```powershell
 py -3.14 -m benchmarks.benchmark_transport --variant baseline --output benchmarks/results/baseline_numba.json
@@ -156,8 +130,7 @@ is compilation-inclusive elapsed time, not an isolated compiler profiler. These
 are local laptop observations; power mode, thermal state and background load were
 not controlled. Baseline benchmark work overlapped some validation work; benchmark
 jobs themselves were sequential. Treat small timing differences as inconclusive.
-Only robust end-to-end benefits warrant retention. Historical v0.2 JSON files were
-not substituted for new measurements.
+Only robust end-to-end benefits warrant retention. Earlier v0.2 measurements were not substituted for this dataset.
 
 `benchmarks/results/secondary_stage_physics.txt` and `secondary_stage_*.json` preserve the intermediate
 source-batching stage (physics hash
@@ -168,12 +141,6 @@ The initial matrix's load-related timing variation motivated five-repeat
 alternating timing-only confirmation, with benchmark/test jobs run sequentially.
 
 ## Testing and reproducibility
-
-The baseline full suite passed 36 tests and 2 subtests. An earlier run had 35 passes
-and one temporary-directory setup error; using an explicit workspace-local
-basetemp resolved the Windows access problem. The first Phase 1 run caught three
-new GUI regressions (empty status bypass and off-panel text); these were fixed.
-Phase 1 then passed 47 tests and 2 subtests before optimization began.
 
 Exact compatibility tests use the frozen baseline source, checking all five
 standard NumPy bit generators, empty/singleton/odd/large source sizes, source
@@ -191,20 +158,9 @@ bitwise equivalence is not promised. The fallback still saves/restores global
 legacy NumPy RNG state under the transport lock; unrelated external global RNG
 users need not honor that lock. Cancellation timing remains nondeterministic.
 
-Final integration: **83 passed, 2 subtests passed**, 27.04 seconds. Intermediate
-source-batching validation passed 47 tests and 2 subtests; expanded equivalence and
-budget checks then passed 79 tests and 2 subtests. Worker/dtype cases brought this
-to 82, followed by the final chronological event ownership regression.
-Compile checks and `git diff --check` passed (Git emits an existing README
-line-ending conversion advisory). The candidate harness initially failed on the
-baseline snapshot's UTF-8 BOM; decoding was corrected to `utf-8-sig` before its
-measurements. No failed candidate run supplied performance results.
-
-| Check | Baseline | Upgraded | Difference |
-|---|---|---|---|
-| Full integration suite | 36 passed, 2 subtests | 83 passed, 2 subtests | 47 added cases; original tests retained |
-| Targeted forced Python fallback | Existing subprocess smoke test | 40 passed | Exact source/RNG and resource checks added |
-| Input / result contracts | Existing sampled-array contracts | Same tuple shapes and numerical results; additive metadata/budget argument | No estimator replacement |
+The historical final integration suite passed **83 tests and 2 subtests**
+in 27.04 seconds. These counts describe that revision. Use the root README
+for current test commands; later tests are not retroactive benchmark evidence.
 
 ## Remaining issues and next work
 
@@ -235,10 +191,9 @@ was adopted without evidence of compatible end-to-end benefit.
   Worker BaseException behavior identified in the audit is unchanged.
 - Native GUI latency, broader sample-count/max-step matrices, allocator profiling,
   controlled paired laptop runs and other hardware remain useful follow-up work.
-- Material provenance, physical units, numerical/model assumptions and physical
-  estimator/uncertainty validation require separate domain review. Software
-  regression tests do not establish physical validity. This is an educational
-  research simulator, not a validated reactor-design or safety-analysis tool.
+- Physical estimator/uncertainty validation requires domain review.
+  Current material metadata and sources are described in ARCHITECTURE_AUDIT.md;
+  software regression tests do not establish physical validity.
 
 Measured comparison and final integration results are recorded below.
 

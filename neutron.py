@@ -1,11 +1,6 @@
-"""
-БЛОК 1 — НЕЙТРОН.
+"""Standalone particle and trajectory model.
 
-Класс Neutron — представление одного нейтрона (одиночный трек).
-
-Примечание: движок Монте-Карло (physics.py) работает с массивами NumPy
-и напрямую этот класс не использует; ветка оставлена как модель отдельной
-частицы (соответствует БЛОКУ 1 исходного монолита).
+The batch transport engine in physics.py operates on NumPy arrays.
 """
 
 import numpy as np
@@ -28,7 +23,7 @@ class Neutron:
             self.direction /= norm
         self.energy = energy
         self.alive  = True
-        self.path   = [self.position.copy()]   # история позиций
+        self.path   = [self.position.copy()]
 
     def move(self, distance):
         if not np.isfinite(distance) or distance < 0:

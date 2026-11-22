@@ -1,0 +1,679 @@
+{
+  "1": {
+    "title": "Вычислительная система и программная среда",
+    "source": "experiment_config.json: environment",
+    "rows": [
+      {
+        "parameter": "python",
+        "value": "3.14.4 (tags/v3.14.4:23116f9, Apr  7 2026, 14:10:54) [MSC v.1944 64 bit (AMD64)]"
+      },
+      {
+        "parameter": "numpy",
+        "value": "2.4.4"
+      },
+      {
+        "parameter": "scipy",
+        "value": "1.18.1"
+      },
+      {
+        "parameter": "numba",
+        "value": "0.67.0"
+      },
+      {
+        "parameter": "platform",
+        "value": "Windows-11-10.0.26200-SP0"
+      },
+      {
+        "parameter": "processor",
+        "value": "Intel64 Family 6 Model 142 Stepping 10, GenuineIntel"
+      },
+      {
+        "parameter": "omp_threads",
+        "value": "1"
+      },
+      {
+        "parameter": "openblas_threads",
+        "value": "1"
+      }
+    ]
+  },
+  "2": {
+    "title": "Входные признаки и область применимости",
+    "source": "experiment_config.json: feature_spec",
+    "rows": [
+      {
+        "position": 0,
+        "name": "thickness_cm",
+        "unit": "cm",
+        "lower": 0.1,
+        "upper": 3.0,
+        "type": "length"
+      },
+      {
+        "position": 1,
+        "name": "absorption_rate",
+        "unit": "1/cm",
+        "lower": 0.02,
+        "upper": 1.2,
+        "type": "rate"
+      },
+      {
+        "position": 2,
+        "name": "scattering_rate",
+        "unit": "1/cm",
+        "lower": 0.0,
+        "upper": 2.0,
+        "type": "rate"
+      }
+    ]
+  },
+  "3": {
+    "title": "Параметры основного Monte Carlo, все конфигурации",
+    "source": "experiment_config.json; generation.json",
+    "rows": [
+      {
+        "parameter": "histories_per_repeat",
+        "value": 8000
+      },
+      {
+        "parameter": "repeats",
+        "value": 3
+      },
+      {
+        "parameter": "source_mu",
+        "value": 1.0
+      },
+      {
+        "parameter": "source_x",
+        "value": 0.0
+      },
+      {
+        "parameter": "max_collisions",
+        "value": 1000
+      },
+      {
+        "parameter": "backend",
+        "value": "numba"
+      },
+      {
+        "parameter": "groups",
+        "value": 900
+      },
+      {
+        "parameter": "total_histories",
+        "value": 21600000
+      }
+    ]
+  },
+  "4": {
+    "title": "Разбиение по независимым физическим группам",
+    "source": "splits.json; experiment_config.json",
+    "rows": [
+      {
+        "part": "test",
+        "groups": 135,
+        "runs": 405,
+        "histories": 3240000
+      },
+      {
+        "part": "validation",
+        "groups": 135,
+        "runs": 405,
+        "histories": 3240000
+      },
+      {
+        "part": "train",
+        "groups": 630,
+        "runs": 1890,
+        "histories": 15120000
+      }
+    ]
+  },
+  "5": {
+    "title": "Архитектуры MLP; validation, три фиксированных seed",
+    "source": "selection.json: trials; experiment_config.json: candidates",
+    "rows": [
+      {
+        "hidden": "[16]",
+        "alpha": 1e-06,
+        "seeds": 3,
+        "converged": 2,
+        "validation_rmse_mean": 0.004548632800480939,
+        "iterations_min": 2221,
+        "iterations_max": 2500
+      },
+      {
+        "hidden": "[32]",
+        "alpha": 1e-06,
+        "seeds": 3,
+        "converged": 1,
+        "validation_rmse_mean": 0.004177197789098976,
+        "iterations_min": 2466,
+        "iterations_max": 2500
+      },
+      {
+        "hidden": "[32, 16]",
+        "alpha": 1e-06,
+        "seeds": 3,
+        "converged": 2,
+        "validation_rmse_mean": 0.002984004467809187,
+        "iterations_min": 2197,
+        "iterations_max": 2500
+      },
+      {
+        "hidden": "[32, 16]",
+        "alpha": 0.0001,
+        "seeds": 3,
+        "converged": 3,
+        "validation_rmse_mean": 0.008298935614850338,
+        "iterations_min": 909,
+        "iterations_max": 1202
+      }
+    ]
+  },
+  "6": {
+    "title": "Сравнение моделей на неизменном test; ошибки в долях",
+    "source": "metrics.json; comparison.csv",
+    "rows": [
+      {
+        "model": "dummy",
+        "n_test": 135,
+        "mae": 0.20611543209876543,
+        "rmse": 0.24457870575609775,
+        "r2": -0.018759436369991,
+        "max_absolute_error": 0.6520981481481481,
+        "bias": 0.033188888888888844,
+        "outside_fraction": 0,
+        "out_of_range_fraction": 0.0
+      },
+      {
+        "model": "ridge",
+        "n_test": 135,
+        "mae": 0.08121373603923573,
+        "rmse": 0.1004590446239897,
+        "r2": 0.8281251046347256,
+        "max_absolute_error": 0.2909729275420954,
+        "bias": 0.011350435678895529,
+        "outside_fraction": 19,
+        "out_of_range_fraction": 0.14074074074074075
+      },
+      {
+        "model": "polynomial_ridge",
+        "n_test": 135,
+        "mae": 0.03413992839407087,
+        "rmse": 0.047221853938106725,
+        "r2": 0.9620230199383449,
+        "max_absolute_error": 0.17212338782172543,
+        "bias": 0.005976361875428164,
+        "outside_fraction": 16,
+        "out_of_range_fraction": 0.11851851851851852
+      },
+      {
+        "model": "mlp",
+        "n_test": 135,
+        "mae": 0.005951729650583468,
+        "rmse": 0.008466724347180475,
+        "r2": 0.9987791418671133,
+        "max_absolute_error": 0.04806205909960887,
+        "bias": 0.0008963046927101489,
+        "outside_fraction": 4,
+        "out_of_range_fraction": 0.02962962962962963
+      }
+    ]
+  },
+  "7": {
+    "title": "Устойчивость основной архитектуры по seed; test",
+    "source": "metrics.json: seed_sensitivity",
+    "rows": [
+      {
+        "seed": 17,
+        "success": true,
+        "mae": 0.005951729650583468,
+        "rmse": 0.008466724347180475,
+        "r2": 0.9987791418671133,
+        "max_absolute_error": 0.04806205909960887,
+        "bias": 0.0008963046927101489,
+        "outside_fraction": 4,
+        "out_of_range_fraction": 0.02962962962962963
+      },
+      {
+        "seed": 29,
+        "success": true,
+        "mae": 0.005912281968816567,
+        "rmse": 0.008424311359748572,
+        "r2": 0.9987913427006911,
+        "max_absolute_error": 0.04786748798995494,
+        "bias": 0.0009149440340987804,
+        "outside_fraction": 4,
+        "out_of_range_fraction": 0.02962962962962963
+      },
+      {
+        "seed": 43,
+        "success": true,
+        "mae": 0.005900487407620572,
+        "rmse": 0.008410215570437836,
+        "r2": 0.9987953840340519,
+        "max_absolute_error": 0.04779640389674872,
+        "bias": 0.0009168837693206665,
+        "outside_fraction": 4,
+        "out_of_range_fraction": 0.02962962962962963
+      }
+    ]
+  },
+  "8": {
+    "title": "Вклад признаков, три seed",
+    "source": "ablation.csv",
+    "rows": [
+      {
+        "features": "thickness_cm",
+        "n_groups": 630,
+        "histories": 15120000,
+        "converged": 3,
+        "attempts": 3,
+        "validation_rmse_mean": 0.1445508981728818,
+        "test_rmse_mean": 0.14115667935861695,
+        "test_rmse_sd": 6.947799808323772e-06,
+        "training_seconds_mean": 3.7356331333285198
+      },
+      {
+        "features": "thickness_cm + absorption_rate",
+        "n_groups": 630,
+        "histories": 15120000,
+        "converged": 3,
+        "attempts": 3,
+        "validation_rmse_mean": 0.09549992738055656,
+        "test_rmse_mean": 0.09366574008447975,
+        "test_rmse_sd": 6.238295590489299e-05,
+        "training_seconds_mean": 6.466728133362873
+      },
+      {
+        "features": "thickness_cm + scattering_rate",
+        "n_groups": 630,
+        "histories": 15120000,
+        "converged": 3,
+        "attempts": 3,
+        "validation_rmse_mean": 0.12519468933377045,
+        "test_rmse_mean": 0.12890419289663957,
+        "test_rmse_sd": 0.00016219020178590086,
+        "training_seconds_mean": 6.423164100017554
+      },
+      {
+        "features": "thickness_cm + absorption_rate + scattering_rate",
+        "n_groups": 630,
+        "histories": 15120000,
+        "converged": 3,
+        "attempts": 3,
+        "validation_rmse_mean": 0.008298935614850338,
+        "test_rmse_mean": 0.008433750425788962,
+        "test_rmse_sd": 2.9413133767476857e-05,
+        "training_seconds_mean": 5.064969500022319
+      }
+    ]
+  },
+  "9": {
+    "title": "Размер train при неизменных validation/test, три seed",
+    "source": "dataset_size_study.csv",
+    "rows": [
+      {
+        "features": "thickness_cm + absorption_rate + scattering_rate",
+        "n_groups": 126,
+        "histories": 3024000,
+        "converged": 3,
+        "attempts": 3,
+        "validation_rmse_mean": 0.013723075386601257,
+        "test_rmse_mean": 0.018300903975198502,
+        "test_rmse_sd": 0.0015275623951381096,
+        "training_seconds_mean": 50.34937413331742
+      },
+      {
+        "features": "thickness_cm + absorption_rate + scattering_rate",
+        "n_groups": 252,
+        "histories": 6048000,
+        "converged": 3,
+        "attempts": 3,
+        "validation_rmse_mean": 0.00939263936736649,
+        "test_rmse_mean": 0.010234557008520336,
+        "test_rmse_sd": 0.00022402456616151602,
+        "training_seconds_mean": 8.665743433307702
+      },
+      {
+        "features": "thickness_cm + absorption_rate + scattering_rate",
+        "n_groups": 378,
+        "histories": 9072000,
+        "converged": 3,
+        "attempts": 3,
+        "validation_rmse_mean": 0.009105511076404024,
+        "test_rmse_mean": 0.009236504977606282,
+        "test_rmse_sd": 4.2156936936369344e-05,
+        "training_seconds_mean": 4.1637401666957885
+      },
+      {
+        "features": "thickness_cm + absorption_rate + scattering_rate",
+        "n_groups": 504,
+        "histories": 12096000,
+        "converged": 3,
+        "attempts": 3,
+        "validation_rmse_mean": 0.00841261492502987,
+        "test_rmse_mean": 0.008602870862011407,
+        "test_rmse_sd": 2.8784747338427987e-05,
+        "training_seconds_mean": 3.6049785999930464
+      },
+      {
+        "features": "thickness_cm + absorption_rate + scattering_rate",
+        "n_groups": 630,
+        "histories": 15120000,
+        "converged": 3,
+        "attempts": 3,
+        "validation_rmse_mean": 0.008298935614850338,
+        "test_rmse_mean": 0.008433750425788962,
+        "test_rmse_sd": 2.9413133767476857e-05,
+        "training_seconds_mean": 5.064969500022319
+      }
+    ]
+  },
+  "10": {
+    "title": "Ошибка MLP по областям каждого признака; test",
+    "source": "error_regions.csv",
+    "rows": [
+      {
+        "feature": "thickness_cm",
+        "lower": 0.1,
+        "upper": 1.0666666666666667,
+        "n": 39,
+        "mae": 0.005322274922532411,
+        "rmse": 0.0067444515502750055,
+        "r2": 0.9992124526051771,
+        "max_absolute_error": 0.014808968455560678,
+        "bias": 0.0017695949558494306,
+        "outside_fraction": 0,
+        "out_of_range_fraction": 0.0
+      },
+      {
+        "feature": "thickness_cm",
+        "lower": 1.0666666666666667,
+        "upper": 2.033333333333333,
+        "n": 49,
+        "mae": 0.004344510061103944,
+        "rmse": 0.005809265905277153,
+        "r2": 0.9986601403090192,
+        "max_absolute_error": 0.01599167573448823,
+        "bias": -0.0002296780161665665,
+        "outside_fraction": 0,
+        "out_of_range_fraction": 0.0
+      },
+      {
+        "feature": "thickness_cm",
+        "lower": 2.033333333333333,
+        "upper": 3.0,
+        "n": 47,
+        "mae": 0.008149655060764063,
+        "rmse": 0.011531532596103502,
+        "r2": 0.9921644265781676,
+        "max_absolute_error": 0.04806205909960887,
+        "bias": 0.0013455564474447678,
+        "outside_fraction": 4,
+        "out_of_range_fraction": 0.0851063829787234
+      },
+      {
+        "feature": "absorption_rate",
+        "lower": 0.02,
+        "upper": 0.41333333333333333,
+        "n": 45,
+        "mae": 0.00908990736991778,
+        "rmse": 0.012227576680910218,
+        "r2": 0.9977118815464248,
+        "max_absolute_error": 0.04806205909960887,
+        "bias": 0.003424820156838647,
+        "outside_fraction": 0,
+        "out_of_range_fraction": 0.0
+      },
+      {
+        "feature": "absorption_rate",
+        "lower": 0.41333333333333333,
+        "upper": 0.8066666666666666,
+        "n": 38,
+        "mae": 0.0035510291853859412,
+        "rmse": 0.004675517442645275,
+        "r2": 0.9993395915950033,
+        "max_absolute_error": 0.013244753185485209,
+        "bias": 0.00123486916481849,
+        "outside_fraction": 0,
+        "out_of_range_fraction": 0.0
+      },
+      {
+        "feature": "absorption_rate",
+        "lower": 0.8066666666666666,
+        "upper": 1.2,
+        "n": 52,
+        "mae": 0.004990356964188507,
+        "rmse": 0.00638315215357856,
+        "r2": 0.9991903641508886,
+        "max_absolute_error": 0.015220542479088883,
+        "bias": -0.0015392461885571462,
+        "outside_fraction": 4,
+        "out_of_range_fraction": 0.07692307692307693
+      },
+      {
+        "feature": "scattering_rate",
+        "lower": 0.0,
+        "upper": 0.6666666666666666,
+        "n": 48,
+        "mae": 0.005841394459793775,
+        "rmse": 0.00776142069833262,
+        "r2": 0.9992005722745984,
+        "max_absolute_error": 0.02608049558211384,
+        "bias": 0.0009001653651876549,
+        "outside_fraction": 0,
+        "out_of_range_fraction": 0.0
+      },
+      {
+        "feature": "scattering_rate",
+        "lower": 0.6666666666666666,
+        "upper": 1.3333333333333333,
+        "n": 39,
+        "mae": 0.006022252401904804,
+        "rmse": 0.008101983890446928,
+        "r2": 0.9988104364090195,
+        "max_absolute_error": 0.018929789356773155,
+        "bias": 0.003283944585695209,
+        "outside_fraction": 1,
+        "out_of_range_fraction": 0.02564102564102564
+      },
+      {
+        "feature": "scattering_rate",
+        "lower": 1.3333333333333333,
+        "upper": 2.0,
+        "n": 48,
+        "mae": 0.006004765105924577,
+        "rmse": 0.009383035470009637,
+        "r2": 0.9973623686627981,
+        "max_absolute_error": 0.04806205909960887,
+        "bias": -0.0010475133928177184,
+        "outside_fraction": 3,
+        "out_of_range_fraction": 0.0625
+      }
+    ]
+  },
+  "11": {
+    "title": "Время, секунды: совпадающие test-конфигурации, семь прогретых серий",
+    "source": "timing.json",
+    "rows": [
+      {
+        "model": "dummy",
+        "operation": "single_predict",
+        "n_configurations": 1,
+        "median_seconds": 3.301281481981277e-05,
+        "q25_seconds": 3.060129628499487e-05,
+        "q75_seconds": 3.531170370816081e-05
+      },
+      {
+        "model": "dummy",
+        "operation": "batch_predict",
+        "n_configurations": 135,
+        "median_seconds": 4.584299982525408e-05,
+        "q25_seconds": 3.502250008750707e-05,
+        "q75_seconds": 5.599950003670529e-05
+      },
+      {
+        "model": "dummy",
+        "operation": "load",
+        "n_configurations": 1,
+        "median_seconds": 0.0008744000224396586,
+        "q25_seconds": 0.0008575999818276614,
+        "q75_seconds": 0.0011731999984476715
+      },
+      {
+        "model": "ridge",
+        "operation": "single_predict",
+        "n_configurations": 1,
+        "median_seconds": 5.2833999981413837e-05,
+        "q25_seconds": 3.9678370381739956e-05,
+        "q75_seconds": 5.3837111099036756e-05
+      },
+      {
+        "model": "ridge",
+        "operation": "batch_predict",
+        "n_configurations": 135,
+        "median_seconds": 9.021499950904399e-05,
+        "q25_seconds": 8.75350000569597e-05,
+        "q75_seconds": 9.895700000924989e-05
+      },
+      {
+        "model": "ridge",
+        "operation": "load",
+        "n_configurations": 1,
+        "median_seconds": 0.0009206000249832869,
+        "q25_seconds": 0.0007960499788168818,
+        "q75_seconds": 0.0009564999782014638
+      },
+      {
+        "model": "polynomial_ridge",
+        "operation": "single_predict",
+        "n_configurations": 1,
+        "median_seconds": 7.855496296003737e-05,
+        "q25_seconds": 6.279088888765761e-05,
+        "q75_seconds": 8.98732962862899e-05
+      },
+      {
+        "model": "polynomial_ridge",
+        "operation": "batch_predict",
+        "n_configurations": 135,
+        "median_seconds": 8.975200005806983e-05,
+        "q25_seconds": 8.736599993426352e-05,
+        "q75_seconds": 9.942200005752966e-05
+      },
+      {
+        "model": "polynomial_ridge",
+        "operation": "load",
+        "n_configurations": 1,
+        "median_seconds": 0.000750300008803606,
+        "q25_seconds": 0.0007317999843508005,
+        "q75_seconds": 0.0008401000231970102
+      },
+      {
+        "model": "mlp",
+        "operation": "single_predict",
+        "n_configurations": 1,
+        "median_seconds": 0.0001261724444554636,
+        "q25_seconds": 0.00011351018516708993,
+        "q75_seconds": 0.0001338978147962027
+      },
+      {
+        "model": "mlp",
+        "operation": "batch_predict",
+        "n_configurations": 135,
+        "median_seconds": 0.0002881190000334755,
+        "q25_seconds": 0.00026771649980219083,
+        "q75_seconds": 0.0002994040001067333
+      },
+      {
+        "model": "mlp",
+        "operation": "load",
+        "n_configurations": 1,
+        "median_seconds": 0.011693199980072677,
+        "q25_seconds": 0.010843399999430403,
+        "q75_seconds": 0.013371849985560402
+      },
+      {
+        "model": "Monte Carlo",
+        "operation": "mc_api",
+        "n_configurations": 135,
+        "median_seconds": 0.0015974562938532067,
+        "q25_seconds": 0.0015379425918648916,
+        "q75_seconds": 0.0016486977746589455
+      },
+      {
+        "model": "Monte Carlo",
+        "operation": "mc_transport",
+        "n_configurations": 135,
+        "median_seconds": 0.0011515096295624972,
+        "q25_seconds": 0.0010928014817181975,
+        "q75_seconds": 0.00117297333371998
+      }
+    ]
+  },
+  "12": {
+    "title": "Условная окупаемость при усреднённой стоимости test-запроса",
+    "source": "timing.json",
+    "rows": [
+      {
+        "accounting": "Deployment",
+        "setup_seconds": 17.93766039831098,
+        "queries": 12191.842115070864,
+        "conditional": true
+      },
+      {
+        "accounting": "Research",
+        "setup_seconds": 918.0146347000264,
+        "queries": 623954.8099952348,
+        "conditional": true
+      }
+    ]
+  },
+  "13": {
+    "title": "Шум Monte Carlo и независимые более точные метки",
+    "source": "metrics.json: label_noise; diagnostics.json",
+    "rows": [
+      {
+        "quantity": "pooled_se_median",
+        "value": 0.0023649342617713498
+      },
+      {
+        "quantity": "pooled_se_rms",
+        "value": 0.002365054697425619
+      },
+      {
+        "quantity": "replicate_sem_median",
+        "value": 0.0018615256586407137
+      },
+      {
+        "quantity": "mc95_coverage",
+        "value": 0.45925925925925926
+      },
+      {
+        "quantity": "main_test_mlp_rmse",
+        "value": 0.008466724347180475
+      },
+      {
+        "quantity": "independent_lhs_mlp_rmse",
+        "value": 0.014376159502757958
+      },
+      {
+        "quantity": "independent_lhs_se_median",
+        "value": 0.0012191325878202642
+      },
+      {
+        "quantity": "replicate_sd_at_500_histories",
+        "value": 0.019083229361330407
+      },
+      {
+        "quantity": "replicate_sd_at_2000_histories",
+        "value": 0.007609358957888641
+      },
+      {
+        "quantity": "replicate_sd_at_8000_histories",
+        "value": 0.0037219186680297832
+      }
+    ]
+  }
+}

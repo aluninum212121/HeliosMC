@@ -8,6 +8,7 @@ from pathlib import Path
 from queue import Queue, Empty, Full
 from types import SimpleNamespace
 import time
+import sys
 
 import matplotlib
 import matplotlib.pyplot as plt
@@ -15,6 +16,7 @@ import matplotlib.animation as animation
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.patches import Circle
+from matplotlib.ticker import MaxNLocator
 import numpy as np
 
 from material import (MATERIALS, MaterialDataset, MaterialQuantity, DataOrigin,
@@ -27,16 +29,16 @@ from simulation_worker import SimulationWorker, ExecutionState
 
 class NeutronSimGUI:
     SCENARIOS = ("Поколения · legacy", "Транспорт через слой")
-    DEFAULTS = dict(scenario=SCENARIOS[0], material_mode="Reference",
-        material=next(iter(MATERIALS)), profile="jendl5_point_0p0253ev",
+    DEFAULTS = dict(scenario=SCENARIOS[1], material_mode="Учебная среда",
+        legacy_material=next(iter(MATERIALS)), slab_material="Вода (H₂O)", profile="jendl5_point_0p0253ev",
         radius="25", source="150", generations="30", width="1", histories="10000",
         absorption="0.5", scattering="0", density="", density_sample="",
         density_method="", seed="", max_steps="500", max_collisions="1000", samples="40")
-    TAB_NAMES = dict(overview="Обзор", heatmap="Тепловая карта", graphs="Графики",
-                     trajectories="Траектории", data="Данные")
-    COLORS = dict(bg="#F6F8FB", panel="#FFFFFF", border="#E2E8F0", text="#1E293B",
+    TAB_NAMES = dict(overview="Обзор", visualization="Визуализация", data="Данные")
+    COLORS = dict(bg="#F8FAFC", panel="#FFFFFF", border="#E2E8F0", text="#172B4D",
         dim="#64748B", blue="#2563EB", green="#16856A", yellow="#B7791F",
         orange="#C2413B", purple="#8170A6")
+    PLOT_FONT = "Segoe UI" if sys.platform == "win32" else "DejaVu Sans"
     OUTCOME_LABELS = dict(fission="Деление", absorption="Поглощение", leak="Утечка",
         unfinished="Не завершены", absorbed="Поглощены", escaped_left="Вышли слева",
         escaped_right="Прошли слой", collision_limit="Лимит столкновений", numeric_limit="Численный лимит")
@@ -47,6 +49,7 @@ class NeutronSimGUI:
 
     def __init__(self, show=True, *, native=None):
         self.native = str(matplotlib.get_backend()).lower() == "tkagg" if native is None else native
+        self._building = True
         self.C = dict(self.COLORS)
         self.worker = SimulationWorker()
         self._closed = False
@@ -64,6 +67,8 @@ class NeutronSimGUI:
         self.heat_bins, self.balance_fractions = 40, False
         self.balance_scope = "Текущее поколение"
         self.graph_kind, self.active_tab = "Коэффициент поколений", "overview"
+        self.visual_kind = "heatmap"
+        self.result_inputs, self.form_dirty, self.last_error = None, False, None
         self._colorbar = self._heat_cache = None
         self._dirty_tabs = set(self.TAB_NAMES)
         self._progress = Queue(maxsize=1)
@@ -73,24 +78,31 @@ class NeutronSimGUI:
         self._build_figures()
         if self.native:
             self._build_window()
-            self._on_scenario_change()
             self._after_id = self.root.after(100, self._poll_worker)
+        self._building = False
+        self._on_scenario_change()
         self._timer = self.fig.canvas.new_timer(interval=100)
         self._draw_empty()
         if show:
             self.root.mainloop() if self.native else plt.show()
 
     def _get(self, name):
+        if name == "material":  # Compatibility alias, never a shared Tk variable.
+            name = "slab_material" if self._is_slab() else "legacy_material"
         if name in self.variables:
             value = self.variables[name].get()
             return self.choice_maps.get(name, {}).get(value, value)
         return self.inputs[name]
 
     def _set(self, name, value):
+        if name == "material":
+            name = "slab_material" if self._is_slab() else "legacy_material"
         self.inputs[name] = str(value)
         if name in self.variables:
             inverse = {v: k for k, v in self.choice_maps.get(name, {}).items()}
             self.variables[name].set(inverse.get(str(value), str(value)))
+        if not self._building:
+            self._form_changed()
 
     @property
     def execution_state(self):
@@ -117,22 +129,24 @@ class NeutronSimGUI:
 
     def _build_figures(self):
         self.figures = {}
-        for key in ("overview", "heatmap", "graphs", "trajectories"):
-            figure = Figure(figsize=(8, 5), facecolor="white", layout="constrained")
+        for key in ("overview", "visualization"):
+            figure = Figure(figsize=(8, 5), facecolor="white",
+                            layout="compressed" if key == "visualization" else "constrained")
             FigureCanvasAgg(figure)
             self.figures[key] = figure
         self.fig = self.figures["overview"]
-        self.ax_overview = self.fig.add_subplot(111)
-        # Status artists retain the previous headless integration surface.
+        # Status artists support the headless Agg controller.
         # Native metrics/status are ttk widgets, outside the scientific figure.
         self.ax_stat = Figure().add_subplot(111)
-        self.ax_main = self.figures["trajectories"].add_subplot(111)
-        self.ax_heat = self.figures["heatmap"].add_subplot(111)
-        graph = self.figures["graphs"]
-        self.ax_k = graph.add_subplot(111, label="coefficient")
-        self.ax_bar = graph.add_subplot(111, label="balance")
-        self.ax_population = graph.add_subplot(111, label="population")
-        self.ax_bar.set_visible(False)
+        visual = self.figures["visualization"]
+        self.ax_main = visual.add_subplot(111, label="trajectories")
+        self.ax_heat = visual.add_subplot(111, label="heatmap")
+        self.ax_main.set_visible(False)
+        self.ax_main.set_in_layout(False)
+        self.overview_grid = self.fig.add_gridspec(1, 2, width_ratios=(1.4, 1))
+        self.ax_k = self.fig.add_subplot(self.overview_grid[0, 0], label="coefficient")
+        self.ax_bar = self.fig.add_subplot(self.overview_grid[0, 1], label="balance")
+        self.ax_population = self.fig.add_subplot(self.overview_grid[0, 0], label="population")
         self.ax_population.set_visible(False)
 
     def _build_window(self):
@@ -169,8 +183,6 @@ class NeutronSimGUI:
         self.root.geometry(f"{w}x{h}")
         self.root.minsize(1000, 620)
         self.root.configure(background=self.C["bg"])
-        for figure in self.figures.values():
-            figure.set_dpi(self.root.winfo_fpixels("1i"))
         self.root.protocol("WM_DELETE_WINDOW", lambda: self._on_close(None))
         style = ttk.Style(self.root)
         style.theme_use("clam")
@@ -181,23 +193,23 @@ class NeutronSimGUI:
         style.configure("Panel.TLabel", background="white")
         style.configure("Muted.TLabel", foreground=self.C["dim"])
         style.configure("PanelMuted.TLabel", background="white", foreground=self.C["dim"], font=("Segoe UI", 9))
-        style.configure("Title.TLabel", font=("Segoe UI", 18, "bold"))
-        style.configure("Section.TLabel", background="white", font=("Segoe UI", 11, "bold"))
-        style.configure("Value.TLabel", background="white", font=("Segoe UI", 19, "bold"))
-        style.configure("TButton", padding=(10, 7), background="#EEF2F7", borderwidth=0)
+        style.configure("Title.TLabel", font=("Segoe UI", 16, "bold"))
+        style.configure("Section.TLabel", background="white", font=("Segoe UI", 10, "bold"))
+        style.configure("Value.TLabel", background="white", font=("Segoe UI", 17, "bold"))
+        style.configure("TButton", padding=(9, 5), background="#EEF2F7", borderwidth=0)
         style.map("TButton", background=[("active", "#E2E8F0")], foreground=[("disabled", "#94A3B8")])
         style.configure("Primary.TButton", background=self.C["blue"], foreground="white")
         style.map("Primary.TButton", background=[("disabled", "#B7C9EA"), ("active", "#1D4ED8")], foreground=[("disabled", "white")])
         style.configure("TEntry", fieldbackground="white", padding=5)
         style.configure("TCombobox", padding=5, fieldbackground="white")
         style.configure("TNotebook", background=self.C["bg"], borderwidth=0)
-        style.configure("TNotebook.Tab", padding=(14, 9))
-        style.map("TNotebook.Tab", background=[("selected", "white")], foreground=[("selected", self.C["blue"])])
+        style.configure("TNotebook.Tab", padding=(18, 8))
+        style.map("TNotebook.Tab", background=[("selected", "#DBEAFE"), ("active", "#EEF2F7")], foreground=[("selected", "#1D4ED8")])
         style.configure("Treeview", rowheight=30, background="white", fieldbackground="white", borderwidth=0)
         style.configure("Treeview.Heading", background="#EEF2F7", padding=8, font=("Segoe UI", 10, "bold"))
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(1, weight=1)
-        top = ttk.Frame(self.root, padding=(18, 12))
+        top = ttk.Frame(self.root, padding=(14, 8))
         top.grid(row=0, column=0, sticky="ew")
         top.columnconfigure(0, weight=1)
         brand = ttk.Frame(top)
@@ -225,7 +237,7 @@ class NeutronSimGUI:
         body.grid(row=1, column=0, sticky="nsew")
         body.columnconfigure(1, weight=1)
         body.rowconfigure(0, weight=1)
-        sidebar = ttk.Frame(body, style="Panel.TFrame", width=300)
+        sidebar = ttk.Frame(body, style="Panel.TFrame", width=292)
         sidebar.grid(row=0, column=0, sticky="ns", padx=(0, 12))
         sidebar.grid_propagate(False)
         sidebar.rowconfigure(0, weight=1)
@@ -245,10 +257,10 @@ class NeutronSimGUI:
         workspace.grid(row=0, column=1, sticky="nsew")
         workspace.columnconfigure(0, weight=1)
         workspace.rowconfigure(1, weight=1)
-        banner = ttk.Frame(workspace, padding=(12, 8))
+        banner = ttk.Frame(workspace, padding=(6, 4))
         banner.grid(row=0, column=0, sticky="ew")
         banner.columnconfigure(0, weight=1)
-        self.warning_var = tk.StringVar(value="Legacy: исторические параметры; физическая валидация показателя не выполнена.")
+        self.warning_var = tk.StringVar(value=self._selected_warning())
         self.warning_label = ttk.Label(banner, textvariable=self.warning_var, foreground=self.C["yellow"], wraplength=700)
         self.warning_label.grid(row=0, column=0, sticky="w")
         ttk.Button(banner, text="Подробнее", command=self._show_details).grid(row=0, column=1, padx=(8, 0))
@@ -264,24 +276,33 @@ class NeutronSimGUI:
                 self._build_data_table(page)
                 continue
             if key == "overview":
+                self.result_caption_var = tk.StringVar(value="Новый эксперимент · транспорт через слой")
+                self.result_caption_label = ttk.Label(page, textvariable=self.result_caption_var, style="PanelMuted.TLabel")
+                self.result_caption_label.pack(fill="x", padx=8, pady=(0, 6))
                 self._build_cards(page)
                 self.summary_var = tk.StringVar(value="Выберите сценарий и настройте параметры слева.")
                 self.summary_label = ttk.Label(page, textvariable=self.summary_var, style="PanelMuted.TLabel", wraplength=900)
                 self.summary_label.pack(fill="x", padx=8, pady=(6, 4))
-                page.bind("<Configure>", lambda e: self.summary_label.configure(wraplength=max(200, e.width-40)))
-            elif key == "graphs":
                 self._build_graph_controls(page)
-            elif key == "heatmap":
-                row = ttk.Frame(page, style="Panel.TFrame")
-                row.pack(fill="x", padx=4, pady=(0, 6))
-                ttk.Label(row, text="Ячеек на ось", style="Panel.TLabel").pack(side="left", padx=(0, 8))
+                page.bind("<Configure>", self._resize_overview_text)
+            elif key == "visualization":
+                self.visual_controls = ttk.Frame(page, style="Panel.TFrame")
+                self.visual_controls.pack(fill="x", pady=(0, 6))
+                self.visual_var = tk.StringVar(value="Карта делений")
+                self.visual_combo = ttk.Combobox(self.visual_controls, textvariable=self.visual_var,
+                    values=("Карта делений", "Траектории"), width=24, state="readonly")
+                self.visual_combo.pack(side="left")
+                self.visual_combo.bind("<<ComboboxSelected>>", self._visual_changed)
+                self.bin_controls = ttk.Frame(page, style="Panel.TFrame")
+                ttk.Label(self.bin_controls, text="Ячеек на ось", style="Panel.TLabel").pack(side="left", padx=(0, 8))
                 self.bin_var = tk.StringVar(value=str(self.heat_bins))
-                bins = ttk.Combobox(row, textvariable=self.bin_var, values=(20, 40, 80, 120), width=6, state="readonly")
+                bins = ttk.Combobox(self.bin_controls, textvariable=self.bin_var, values=(20, 40, 80, 120), width=6, state="readonly")
                 bins.pack(side="left")
                 bins.bind("<<ComboboxSelected>>", self._change_bins)
-            elif key == "trajectories":
                 self._build_trajectory_controls(page)
             canvas = FigureCanvasTkAgg(self.figures[key], master=page)
+            canvas.get_tk_widget().bind("<Map>",
+                lambda event, plot=canvas: self.root.after_idle(self._resize_mapped_canvas, plot), add="+")
             toolbar = PlotToolbar(canvas, page, pack_toolbar=False)
             toolbar.update()
             toolbar.pack(side="bottom", fill="x")
@@ -298,65 +319,80 @@ class NeutronSimGUI:
         self.progressbar = ttk.Progressbar(footer, mode="determinate", length=180)
         self.progressbar.grid(row=0, column=1, sticky="e", padx=(12, 0))
 
+    def _resize_overview_text(self, event):
+        self.summary_label.configure(wraplength=max(200, event.width-30))
+        self.result_caption_label.configure(wraplength=max(200, event.width-30))
+
+    def _resize_mapped_canvas(self, canvas):
+        # TkAgg changes its device-pixel ratio on Map. A previously hidden tab
+        # can keep its old figure extent if its widget size did not change.
+        # Resize once after mapping so the renderer and Tk image agree.
+        widget = canvas.get_tk_widget()
+        if widget.winfo_ismapped():
+            canvas.resize(SimpleNamespace(width=widget.winfo_width(), height=widget.winfo_height()))
+
     def _build_form(self):
         t = self.ttk
         def group(title):
             frame = t.Frame(self.form, style="Panel.TFrame")
-            frame.pack(fill="x", pady=(0, 16))
-            t.Label(frame, text=title, style="Section.TLabel").pack(anchor="w", pady=(0, 8))
+            frame.pack(fill="x", pady=(0, 12))
+            t.Label(frame, text=title, style="Section.TLabel").pack(anchor="w", pady=(0, 6))
             return frame
-        t.Label(self.form, text="Параметры эксперимента", style="Section.TLabel").pack(anchor="w", pady=(0, 18))
-        self._combo(group("Сценарий"), "scenario", self.SCENARIOS, self._on_scenario_change)
-        self.legacy_group = group("Материал · legacy")
-        self._combo(self.legacy_group, "material", list(MATERIALS), self._form_changed)
-        t.Label(self.legacy_group, text="Исторические константы. Источники не подтверждены.",
-                style="PanelMuted.TLabel", wraplength=245).pack(anchor="w", pady=(6, 0))
-        self.slab_group = group("Среда слоя")
-        self._combo(self.slab_group, "material_mode", {"Reference · справочные": "Reference", "Учебная среда": "Учебная среда"}, self._on_scenario_change)
+        t.Label(self.form, text="Основные параметры", style="Section.TLabel").pack(anchor="w", pady=(0, 12))
+        self._combo(group("Сценарий"), "scenario",
+            {"Транспорт через слой": self.SCENARIOS[1], "Поколения · legacy": self.SCENARIOS[0]},
+            self._on_scenario_change)
+        self.legacy_group = group("Исторический материал")
+        self._combo(self.legacy_group, "legacy_material", list(MATERIALS), self._form_changed)
+        self.slab_group = group("Среда")
+        self._combo(self.slab_group, "material_mode",
+            {"Учебная среда": "Учебная среда", "Reference": "Reference"}, self._on_scenario_change)
         self.slab_material_frame = t.Frame(self.slab_group, style="Panel.TFrame")
-        self._combo(self.slab_material_frame, "material", ["Вода (H₂O)", "Графит"], self._on_material_change)
+        self._combo(self.slab_material_frame, "slab_material", ["Вода (H₂O)", "Графит"], self._on_material_change)
         self.profile_frame = t.Frame(self.slab_group, style="Panel.TFrame")
-        t.Label(self.profile_frame, text="Энергетический профиль", style="PanelMuted.TLabel").pack(anchor="w")
+        t.Label(self.profile_frame, text="Энергетический профиль", style="PanelMuted.TLabel").pack(anchor="w", pady=(4, 3))
         self.profile_combo = self._combo(self.profile_frame, "profile", self._profile_choices(), self._profile_changed)
-        self.profile_note = t.Label(self.profile_frame, style="PanelMuted.TLabel", wraplength=245)
-        self.profile_note.pack(anchor="w", pady=(6, 0))
         self.density_frame = t.Frame(self.slab_group, style="Panel.TFrame")
-        for name, label in (("density", "Плотность графита, г/см³"), ("density_sample", "Марка / образец / источник плотности"), ("density_method", "Метод определения плотности")):
+        for name, label in (("density", "Плотность графита, г/см³"), ("density_sample", "Образец / источник плотности"), ("density_method", "Метод определения плотности")):
             self._entry(self.density_frame, name, label)
         self.rates_frame = t.Frame(self.slab_group, style="Panel.TFrame")
-        self._entry(self.rates_frame, "absorption", "Коэффициент поглощения, см⁻¹")
-        self._entry(self.rates_frame, "scattering", "Коэффициент рассеяния, см⁻¹")
-        t.Label(self.rates_frame, text="Заданные математические коэффициенты, без привязки к реальному веществу.", style="PanelMuted.TLabel", wraplength=245).pack(anchor="w", pady=4)
-        self.geometry_group = group("Параметры расчёта")
+        self._entry(self.rates_frame, "absorption", "Поглощение, см⁻¹")
+        self._entry(self.rates_frame, "scattering", "Рассеяние, см⁻¹")
+        self.geometry_group = group("Геометрия и объём расчёта")
         self.generation_fields = t.Frame(self.geometry_group, style="Panel.TFrame")
         for name, label in (("radius", "Радиус сферы, см"), ("source", "Начальных нейтронов"), ("generations", "Поколений")):
             self._entry(self.generation_fields, name, label)
         self.slab_fields = t.Frame(self.geometry_group, style="Panel.TFrame")
         self._entry(self.slab_fields, "width", "Толщина слоя, см")
-        self._entry(self.slab_fields, "histories", "Число независимых историй")
-        self.advanced_button = t.Button(self.form, text="▸ Дополнительные настройки", command=self._toggle_advanced)
-        self.advanced_button.pack(fill="x", pady=(0, 8))
+        self._entry(self.slab_fields, "histories", "Независимых историй")
+        self.advanced_button = t.Button(self.form, text="▸ Дополнительные", command=self._toggle_advanced)
+        self.advanced_button.pack(fill="x", pady=(0, 6))
         self.advanced = t.Frame(self.form, style="Panel.TFrame")
-        self._entry(self.advanced, "seed", "Seed (пусто — сформировать)")
+        self._entry(self.advanced, "seed", "Seed · пусто для нового значения")
         self.steps_frame = t.Frame(self.advanced, style="Panel.TFrame")
         self._entry(self.steps_frame, "max_steps", "Лимит шагов на историю")
         self.collisions_frame = t.Frame(self.advanced, style="Panel.TFrame")
-        self._entry(self.collisions_frame, "max_collisions", "Лимит столкновений на историю")
+        self._entry(self.collisions_frame, "max_collisions", "Лимит столкновений")
         self.samples_frame = t.Frame(self.advanced, style="Panel.TFrame")
-        self._entry(self.samples_frame, "samples", "Сохраняемых траекторий на поколение")
-        t.Label(self.advanced, text="Seed фиксируется перед запуском. Совпадение результатов требует той же среды и вычислительного режима.", style="PanelMuted.TLabel", wraplength=245).pack(anchor="w", pady=8)
+        self._entry(self.samples_frame, "samples", "Сохраняемых траекторий / поколение")
+        self.material_button = t.Button(self.form, text="▸ Сведения о материале", command=self._toggle_material_details)
+        self.material_button.pack(fill="x", pady=(0, 6))
+        self.material_details = t.Frame(self.form, style="Panel.TFrame")
+        self.material_note = t.Label(self.material_details, style="PanelMuted.TLabel", wraplength=240)
+        self.material_note.pack(fill="x", pady=6)
+        t.Button(self.material_details, text="Условия и ограничения", command=lambda: self._show_details(current_form=True)).pack(fill="x")
         self.archive_frame = t.Frame(self.form, style="Panel.TFrame")
-        t.Label(self.archive_frame, text="Архив · только чтение", style="Section.TLabel").pack(anchor="w", pady=(0, 10))
-        self.archive_label = t.Label(self.archive_frame, style="PanelMuted.TLabel", wraplength=245)
+        t.Label(self.archive_frame, text="Архив · только чтение", style="Section.TLabel").pack(anchor="w", pady=(0, 8))
+        self.archive_label = t.Label(self.archive_frame, style="PanelMuted.TLabel", wraplength=240)
         self.archive_label.pack(fill="x")
 
     def _entry(self, parent, name, label):
-        self.ttk.Label(parent, text=label, style="PanelMuted.TLabel", wraplength=245).pack(anchor="w", pady=(5, 3))
+        self.ttk.Label(parent, text=label, style="PanelMuted.TLabel", wraplength=240).pack(anchor="w", pady=(4, 2))
         variable = self.tk.StringVar(value=self.inputs[name])
         self.variables[name] = variable
+        variable.trace_add("write", lambda *args: self._form_changed())
         entry = self.ttk.Entry(parent, textvariable=variable)
-        entry.pack(fill="x", pady=(0, 3))
-        entry.bind("<KeyRelease>", self._form_changed)
+        entry.pack(fill="x", pady=(0, 2))
         self.widgets.append((entry, "normal"))
         return entry
 
@@ -365,10 +401,11 @@ class NeutronSimGUI:
         if isinstance(choices, dict):
             self.choice_maps[name] = choices
             current = {v: k for k, v in choices.items()}.get(current, current)
-        variable = self.variables.get(name)
-        if variable is None:
-            variable = self.tk.StringVar(value=current)
-            self.variables[name] = variable
+        if name in self.variables:
+            raise ValueError(f"Duplicate control variable: {name}")
+        variable = self.tk.StringVar(value=current)
+        self.variables[name] = variable
+        variable.trace_add("write", lambda *args: self._form_changed())
         widget = self.ttk.Combobox(parent, textvariable=variable, values=values, state="readonly")
         widget.pack(fill="x")
         widget.bind("<<ComboboxSelected>>", command)
@@ -382,10 +419,10 @@ class NeutronSimGUI:
     def _toggle_advanced(self):
         if self.advanced.winfo_manager():
             self.advanced.pack_forget()
-            self.advanced_button.configure(text="▸ Дополнительные настройки")
+            self.advanced_button.configure(text="▸ Дополнительные")
         else:
-            self.advanced.pack(fill="x")
-            self.advanced_button.configure(text="▾ Дополнительные настройки")
+            self.advanced.pack(fill="x", before=self.material_button)
+            self.advanced_button.configure(text="▾ Дополнительные")
 
     def _scroll_sidebar(self, event):
         widget = self.root.winfo_containing(event.x_root, event.y_root)
@@ -397,150 +434,275 @@ class NeutronSimGUI:
 
     def _on_scenario_change(self, event=None):
         if self.native:
+            advanced_open = bool(self.advanced.winfo_manager())
+            details_open = bool(self.material_details.winfo_manager())
+            for frame in (self.legacy_group, self.slab_group, self.geometry_group, self.advanced_button,
+                          self.advanced, self.material_button, self.material_details, self.archive_frame):
+                frame.pack_forget()
             if self.loaded_configuration is not None:
-                for frame in (self.legacy_group, self.slab_group, self.geometry_group, self.advanced_button, self.advanced):
-                    frame.pack_forget()
-                self.archive_frame.pack(fill="x", pady=(8, 16))
-                config = self.loaded_configuration
-                p = config["parameters"]
+                config, p = self.loaded_configuration, self.loaded_configuration["parameters"]
                 lines = [f"Слоёв: {len(config['layers'])}", f"Границы, см: {p['edges_cm']}",
-                         f"Историй: {p['n_histories']}", f"Источник: x={p['source_x']:g} см; μ={p['source_mu']:g}",
-                         f"Лимит столкновений: {p['max_collisions']}", f"Seed: {p['seed']}"]
-                for i, layer in enumerate(config["layers"]):
-                    lines += [f"\nСлой {i+1}: {layer['name']}", f"Данные: {layer['data_kind']}",
-                              f"Температура: {layer.get('temperature')} K"]
-                lines += ["\nПовтор использует полную исходную конфигурацию. Все параметры и источники — во вкладке «Данные». Для редактирования выберите «Новый»."]
+                    f"Историй: {p['n_histories']}", f"Источник: x={p['source_x']:g} см; μ={p['source_mu']:g}",
+                    f"Seed: {p['seed']}", "\nПовтор использует полную исходную конфигурацию. Параметры и источники — в «Данных»; «Новый» открывает редактор."]
                 self.archive_label.configure(text="\n".join(lines))
-                return
-            self.archive_frame.pack_forget()
-            self.geometry_group.pack(fill="x", pady=(0, 16))
-            self.advanced_button.pack(fill="x", pady=(0, 8))
-            slab = self._is_slab()
-            for frame in (self.legacy_group, self.slab_group):
-                frame.pack_forget()
-            (self.slab_group if slab else self.legacy_group).pack(fill="x", pady=(0, 16), before=self.geometry_group)
-            for frame in (self.generation_fields, self.slab_fields, self.steps_frame, self.collisions_frame, self.samples_frame):
-                frame.pack_forget()
-            (self.slab_fields if slab else self.generation_fields).pack(fill="x")
-            (self.collisions_frame if slab else self.steps_frame).pack(fill="x")
-            if not slab:
-                self.samples_frame.pack(fill="x")
-            if slab and self._get("material_mode") == "Reference":
-                if self._get("material") not in ("Вода (H₂O)", "Графит"):
-                    self._set("material", "Вода (H₂O)")
-            elif not slab and self._get("material") not in MATERIALS:
-                self._set("material", next(iter(MATERIALS)))
-            if slab:
-                self._on_material_change()
+                self.archive_frame.pack(fill="x", pady=8)
+            else:
+                slab = self._is_slab()
+                (self.slab_group if slab else self.legacy_group).pack(fill="x", pady=(0, 12))
+                self.geometry_group.pack(fill="x", pady=(0, 12))
+                for frame in (self.generation_fields, self.slab_fields, self.steps_frame, self.collisions_frame, self.samples_frame):
+                    frame.pack_forget()
+                (self.slab_fields if slab else self.generation_fields).pack(fill="x")
+                (self.collisions_frame if slab else self.steps_frame).pack(fill="x")
+                if not slab:
+                    self.samples_frame.pack(fill="x")
+                self.advanced_button.pack(fill="x", pady=(0, 6))
+                if advanced_open:
+                    self.advanced.pack(fill="x")
+                self.material_button.pack(fill="x", pady=(0, 6))
+                if details_open:
+                    self.material_details.pack(fill="x")
+                if slab:
+                    self._on_material_change()
+                self._update_material_details()
         self._form_changed()
+        if self.result is None:
+            self._sync_visual_availability()
 
     def _on_material_change(self, event=None):
         if self.native:
             for frame in (self.slab_material_frame, self.profile_frame, self.density_frame, self.rates_frame):
                 frame.pack_forget()
             if self._get("material_mode") == "Reference":
-                self.slab_material_frame.pack(fill="x", pady=(8, 0))
-                self.profile_frame.pack(fill="x", pady=(8, 0))
-                if self._get("material") == "Графит":
-                    self.density_frame.pack(fill="x", pady=(8, 0))
-                choices, selected = self._profile_choices(self._get("material")), self._get("profile")
+                self.slab_material_frame.pack(fill="x", pady=(6, 0))
+                self.profile_frame.pack(fill="x", pady=(4, 0))
+                material = self._get("slab_material")
+                if material == "Графит":
+                    self.density_frame.pack(fill="x", pady=(4, 0))
+                choices, selected = self._profile_choices(material), self._get("profile")
                 self.choice_maps["profile"] = choices
                 self.profile_combo.configure(values=list(choices))
-                if selected not in choices.values():
+                if selected not in choices.values() and choices:
                     selected = next(iter(choices.values()))
                 self._set("profile", selected)
             else:
-                self.rates_frame.pack(fill="x", pady=(8, 0))
-            self._profile_changed()
+                self.rates_frame.pack(fill="x", pady=(4, 0))
+            self._update_material_details()
         self._form_changed()
 
     def _profile_changed(self, event=None):
         if self.native:
-            profile = get_reference_profiles().get(self._get("profile"))
-            if profile:
-                low, high = profile["energy_bounds_ev"]
-                energy = f"Точка: {low:g} эВ; без усреднения." if low == high else f"Усреднение по потоку: {low:g}–{high:g} эВ; kT = 0,0253 эВ."
-                self.profile_note.configure(text=energy + "\nМатериал: 300 K. Свободные атомы, изотропное рассеяние. Проверены числа источника; модель не валидирована.")
+            self._update_material_details()
         self._form_changed()
 
     def _form_changed(self, event=None):
-        if self.result is not None and self.worker.state != ExecutionState.RUNNING:
-            self._set_status("Настройки изменены. Показаны результаты последнего завершённого запуска.")
-        elif self.result is None and self.native:
+        if self._building:
+            return
+        self.form_dirty = self.result_inputs is not None and self._form_snapshot() != self.result_inputs
+        if self.result is not None:
+            if self.form_dirty:
+                self._set_status("Параметры изменены · показаны результаты предыдущего запуска")
+            elif not self.last_error:
+                self._set_status("Показаны результаты конфигурации запуска")
+            self._sync_result_caption()
+        elif self.native:
             self.warning_text = self._selected_warning()
             self.warning_var.set(self.warning_text)
 
     def _selected_warning(self):
         if not self._is_slab():
-            return "Legacy: исторические параметры; физическая валидация показателя не выполнена."
+            return "Legacy · экспериментальные параметры, без физической валидации"
         if self._get("material_mode") != "Reference":
-            return "Учебная среда: коэффициенты задаются пользователем и не являются измеренными свойствами вещества."
-        text = "Reference: документированные ядерные данные; свободные атомы, без связанных состояний и изменения энергии."
-        if self._get("material") == "Графит":
-            text += " Плотность графита требует сведений об образце и остаётся неподтверждённым входом."
-        return text
+            return "Учебная среда · заданные математические коэффициенты"
+        return ("Reference · плотность графита не проверена" if self._get("slab_material") == "Графит" else
+                "Reference · данные источника проверены; модель приближённая")
+
+    def _form_snapshot(self):
+        keys = ["scenario", "seed"]
+        if self._is_slab():
+            keys += ["material_mode", "width", "histories", "max_collisions"]
+            if self._get("material_mode") == "Reference":
+                keys += ["slab_material", "profile"]
+                if self._get("slab_material") == "Графит":
+                    keys += ["density", "density_sample", "density_method"]
+            else:
+                keys += ["absorption", "scattering"]
+        else:
+            keys += ["legacy_material", "radius", "source", "generations", "max_steps", "samples"]
+        return {key: str(self._get(key)).strip() for key in keys}
+
+    def _sync_result_caption(self):
+        mode = "транспорт через слой" if self.result_scenario == "slab" else "поколения · legacy"
+        self.result_caption = ("Параметры изменены · показан предыдущий запуск: " if self.form_dirty else
+                               "Результаты запуска: ") + mode
+        if self.last_error:
+            self.result_caption = "Ошибка ввода · сохранены предыдущие результаты"
+        if self.native:
+            self.result_caption_var.set(self.result_caption)
+            self.result_caption_label.configure(foreground=self.C["yellow"] if self.form_dirty or self.last_error else self.C["dim"])
+
+    def _toggle_material_details(self):
+        opened = bool(self.material_details.winfo_manager())
+        if opened:
+            self.material_details.pack_forget()
+        else:
+            self._update_material_details()
+            self.material_details.pack(fill="x")
+        self.material_button.configure(text=("▸" if opened else "▾") + " Сведения о материале")
+
+    def _update_material_details(self):
+        if not self._is_slab():
+            text = f"Тип: legacy_unverified\nМатериал: {self._get('legacy_material')}\nИсточник: неизвестен\nОбласть: учебная модель поколений"
+        elif self._get("material_mode") != "Reference":
+            text = "Тип: educational\nИсточник: коэффициенты пользователя\nЕдиницы: см⁻¹\nСтатус: математическая среда, без измеренных свойств материала"
+        else:
+            p = get_reference_profiles().get(self._get("profile"))
+            if not p:
+                text = "Профиль не выбран"
+            else:
+                lo, hi = p["energy_bounds_ev"]
+                energy = f"Точка {lo:g} эВ; без усреднения" if lo == hi else f"Поток Максвелла, {lo:g}–{hi:g} эВ"
+                text = f"Тип: reference\nИсточник: {p['source_library']}\n{energy}\nМатериал: {p['material_temperature_K']:g} K\nЯдерные числа: source_checked\nВалидация модели: не выполнена"
+                text += "\nВода: 0,1 МПа; плотность IAPWS" if self._get("slab_material") == "Вода (H₂O)" else "\nПлотность: данные пользователя, не проверены"
+        self.material_note.configure(text=text)
 
     def _build_cards(self, parent):
         row = self.ttk.Frame(parent, style="Panel.TFrame")
-        row.pack(fill="x", padx=4, pady=(6, 10))
+        row.pack(fill="x", padx=4, pady=(0, 3))
         self.card_vars = []
         for i in range(4):
             row.columnconfigure(i, weight=1, uniform="cards")
-            frame = self.ttk.Frame(row, style="Panel.TFrame", padding=(10, 6))
+            frame = self.ttk.Frame(row, style="Panel.TFrame", padding=(10, 3))
             frame.grid(row=0, column=i, sticky="nsew", padx=2)
             title, value, note = (self.tk.StringVar(value=text) for text in ("Результат", "—", "После расчёта"))
             self.ttk.Label(frame, textvariable=title, style="PanelMuted.TLabel", wraplength=180).pack(anchor="w")
-            self.ttk.Label(frame, textvariable=value, style="Value.TLabel").pack(anchor="w", pady=(5, 2))
+            self.ttk.Label(frame, textvariable=value, style="Value.TLabel").pack(anchor="w", pady=(2, 0))
             self.ttk.Label(frame, textvariable=note, style="PanelMuted.TLabel", wraplength=180).pack(anchor="w")
             frame.bind("<Configure>", lambda e, f=frame: [child.configure(wraplength=max(70, e.width-20)) for child in (f.winfo_children()[0], f.winfo_children()[2])])
             self.card_vars.append((title, value, note))
 
     def _build_graph_controls(self, parent):
-        row = self.ttk.Frame(parent, style="Panel.TFrame")
-        row.pack(fill="x", padx=4, pady=(0, 8))
+        self.graph_controls = self.ttk.Frame(parent, style="Panel.TFrame")
+        self.graph_controls.pack(fill="x", padx=6, pady=(0, 4))
         self.graph_var = self.tk.StringVar(value=self.graph_kind)
-        self.graph_combo = self.ttk.Combobox(row, textvariable=self.graph_var, state="readonly", width=27,
-            values=("Коэффициент поколений", "Баланс исходов", "Частицы по поколениям"))
+        self.graph_combo = self.ttk.Combobox(self.graph_controls, textvariable=self.graph_var, state="readonly", width=25,
+            values=("Коэффициент поколений", "Частицы по поколениям"))
         self.graph_combo.pack(side="left", padx=(0, 10))
         self.graph_combo.bind("<<ComboboxSelected>>", self._graph_changed)
         self.scope_var = self.tk.StringVar(value=self.balance_scope)
-        self.scope_combo = self.ttk.Combobox(row, textvariable=self.scope_var, state="readonly", width=19,
+        self.scope_combo = self.ttk.Combobox(self.graph_controls, textvariable=self.scope_var, state="readonly", width=19,
             values=("Текущее поколение", "Весь эксперимент"))
         self.scope_combo.pack(side="left", padx=(0, 10))
         self.scope_combo.bind("<<ComboboxSelected>>", self._graph_changed)
         self.fractions_var = self.tk.BooleanVar(value=False)
-        self.ttk.Checkbutton(row, text="Доли", variable=self.fractions_var, command=self._graph_changed).pack(side="left")
+        self.fractions_control = self.ttk.Checkbutton(self.graph_controls, text="Доли исходов", variable=self.fractions_var, command=self._graph_changed)
+        self.fractions_control.pack(side="left")
 
     def _build_trajectory_controls(self, parent):
-        row = self.ttk.Frame(parent, style="Panel.TFrame")
-        row.pack(fill="x", padx=4, pady=(0, 8))
-        self.ttk.Button(row, text="Назад", command=lambda: self._step_gen(-1)).pack(side="left", padx=(0, 6))
+        self.trajectory_controls = self.ttk.Frame(parent, style="Panel.TFrame")
+        row = self.trajectory_controls
+        self.trajectory_buttons = []
+        def button(title, command):
+            control = self.ttk.Button(row, text=title, command=command)
+            control.pack(side="left", padx=(0, 6))
+            self.trajectory_buttons.append(control)
+            return control
+        button("Назад", lambda: self._step_gen(-1))
         self.generation_var = self.tk.StringVar(value="—")
         self.generation_combo = self.ttk.Combobox(row, textvariable=self.generation_var, width=6, state="readonly")
         self.generation_combo.pack(side="left", padx=(0, 6))
         self.generation_combo.bind("<<ComboboxSelected>>", self._select_generation)
-        self.ttk.Button(row, text="Вперёд", command=lambda: self._step_gen(1)).pack(side="left", padx=(0, 12))
-        self.play_button = self.ttk.Button(row, text="Воспроизвести", command=self._on_anim)
-        self.play_button.pack(side="left")
-        self.ttk.Button(row, text="К первому", command=self._reset_generation).pack(side="left", padx=6)
+        button("Вперёд", lambda: self._step_gen(1))
+        self.play_button = button("Воспроизвести", self._on_anim)
+        button("К первому", self._reset_generation)
 
     def _build_data_table(self, parent):
-        self.ttk.Label(parent, text="Параметры последнего расчёта, результаты и происхождение данных", style="Section.TLabel").pack(anchor="w", pady=(4, 12))
+        self.ttk.Label(parent, text="Параметры, результаты и источники", style="Section.TLabel").pack(anchor="w", pady=(2, 8))
         container = self.ttk.Frame(parent, style="Panel.TFrame")
         container.pack(fill="both", expand=True)
         container.rowconfigure(0, weight=1)
         container.columnconfigure(0, weight=1)
         columns = ("parameter", "value", "unit", "uncertainty", "source")
-        self.data_tree = self.ttk.Treeview(container, columns=columns, show="headings")
-        for key, title, width in zip(columns, ("Параметр", "Значение", "Единица", "Неопределённость", "Источник / статус"), (220, 170, 80, 220, 350)):
+        self.data_tree = self.ttk.Treeview(container, columns=columns, show="headings", selectmode="browse")
+        for key, title, width in zip(columns, ("Параметр", "Значение", "Единица", "Неопределённость", "Источник / статус"), (205, 160, 95, 220, 330)):
             self.data_tree.heading(key, text=title)
-            self.data_tree.column(key, width=width, minwidth=70, stretch=key in ("parameter", "source"))
+            self.data_tree.column(key, width=width, minwidth=95 if key == "unit" else 150,
+                                  stretch=key in ("parameter", "source"))
         self.data_tree.grid(row=0, column=0, sticky="nsew")
         vertical = self.ttk.Scrollbar(container, orient="vertical", command=self.data_tree.yview)
         vertical.grid(row=0, column=1, sticky="ns")
         horizontal = self.ttk.Scrollbar(container, orient="horizontal", command=self.data_tree.xview)
         horizontal.grid(row=1, column=0, sticky="ew")
         self.data_tree.configure(yscrollcommand=vertical.set, xscrollcommand=horizontal.set)
+        self.ttk.Label(parent, text="Выберите строку для просмотра полного значения", style="PanelMuted.TLabel").pack(anchor="w", pady=(8, 3))
+        from tkinter.scrolledtext import ScrolledText
+        self.cell_details = ScrolledText(parent, height=4, wrap="word", font=("Segoe UI", 9), relief="flat",
+                                        background="#F8FAFC", foreground=self.C["text"], padx=8, pady=6)
+        self.cell_details.pack(fill="x")
+        self.cell_details.configure(state="disabled")
+        self.data_tree.bind("<<TreeviewSelect>>", self._show_data_row)
+
+    def _show_data_row(self, event=None):
+        selected = self.data_tree.selection()
+        if not selected:
+            return
+        values = self.data_tree.item(selected[0], "values")
+        names = ("Параметр", "Значение", "Единица", "Неопределённость", "Источник / статус")
+        self.cell_details.configure(state="normal")
+        self.cell_details.delete("1.0", "end")
+        self.cell_details.insert("1.0", "\n".join(f"{name}: {value}" for name, value in zip(names, values)))
+        self.cell_details.configure(state="disabled")
+
+    @property
+    def available_visualizations(self):
+        if self.result is None or self.result_scenario != "generations":
+            return ()
+        available = []
+        if any(len(frame) for frame in self.result.get("fiss_frames", [])):
+            available.append("heatmap")
+        if any(len(frame) for frame in self.result.get("path_frames", [])):
+            available.append("trajectories")
+        return tuple(available)
+
+    def _sync_visual_availability(self):
+        available = self.available_visualizations
+        if available and self.visual_kind not in available:
+            self.visual_kind = available[0]
+        if not self.native:
+            return
+        page = self.pages["visualization"]
+        if available:
+            self.notebook.insert(1, page, text=self.TAB_NAMES["visualization"])
+            # Moving an already hidden ttk tab does not make it visible again.
+            self.notebook.tab(page, state="normal")
+            labels = {"heatmap": "Карта делений", "trajectories": "Траектории"}
+            self.visual_combo.configure(values=[labels[k] for k in available])
+            self.visual_var.set(labels[self.visual_kind])
+            self.visual_combo.configure(state="readonly" if len(available) > 1 else "disabled")
+            self.bin_controls.pack_forget()
+            self.trajectory_controls.pack_forget()
+            controls = self.bin_controls if self.visual_kind == "heatmap" else self.trajectory_controls
+            controls.pack(fill="x", pady=(0, 6), before=self.canvases["visualization"].get_tk_widget())
+        else:
+            if self.active_tab == "visualization":
+                self.active_tab = "overview"
+                self.notebook.select(self.pages["overview"])
+            self.notebook.hide(page)
+        self._sync_export_actions()
+
+    def _visual_changed(self, event=None):
+        self._stop_animation()
+        self.visual_kind = "heatmap" if self.visual_var.get() == "Карта делений" else "trajectories"
+        self._sync_visual_availability()
+        self._dirty_tabs.add("visualization")
+        self._render_tab("visualization")
+
+    def _sync_export_actions(self):
+        if self.native:
+            self.export_menu.entryconfigure(0, state="normal" if self.experiment is not None else "disabled")
+            plot = self.result is not None and (self.active_tab == "overview" or
+                    self.active_tab == "visualization" and bool(self.available_visualizations))
+            self.export_menu.entryconfigure(1, state="normal" if plot else "disabled")
 
     def _parse_int(self, name, minimum=0):
         try:
@@ -575,7 +737,7 @@ class NeutronSimGUI:
             if profile_id not in profiles:
                 raise ValueError("Неизвестный энергетический профиль.")
             profile = profiles[profile_id]
-            material = self._get("material")
+            material = self._get("slab_material")
             if material not in profile["available_materials"]:
                 raise ValueError("Этот reference-профиль недоступен для выбранного материала.")
             options = {}
@@ -614,12 +776,13 @@ class NeutronSimGUI:
         if self.worker.state == ExecutionState.RUNNING or self._closed:
             return
         self._stop_animation()
+        self.last_error = None
         try:
             if self._is_slab():
                 config = deepcopy(self.loaded_configuration) if self.loaded_configuration is not None else self._build_slab_configuration()
                 scenario, function, arguments = "slab", run_slab_experiment, dict(config=config)
             else:
-                key = self._get("material")
+                key = self._get("legacy_material")
                 if key not in MATERIALS:
                     raise ValueError("Выберите существующий legacy-материал.")
                 config = dict(n_gen=self._parse_int("generations", 1), n_source=self._parse_int("source", 1),
@@ -628,36 +791,42 @@ class NeutronSimGUI:
                     max_memory_bytes=self.max_memory_bytes)
                 scenario, function, arguments = "generations", estimate_k_full, dict(config)
                 arguments["callback"] = self._report_progress
-            self.result_scenario, self.result_config = scenario, config
-            self.result_radius = config.get("radius")
-            self.result = self.experiment = None
-            self._heat_cache = None
-            self._drain_progress()
-            self._started_at = time.perf_counter()
+        except Exception as exc:
+            self.last_error = f"Ошибка ввода: {exc}"
+            if self.result is not None:
+                self._set_status(self.last_error)
+                self._sync_result_caption()
+            else:
+                self.worker.state = ExecutionState.FAILED
+                self._update_status(self.last_error, self.C["orange"])
+            return
+        self.result_scenario, self.result_config = scenario, config
+        self.result_inputs = self._form_snapshot()
+        self.form_dirty = False
+        self.result_radius = config.get("radius")
+        self.result = self.experiment = None
+        self._heat_cache = None
+        self._drain_progress()
+        self._started_at = time.perf_counter()
+        try:
             self.worker.start(function, **arguments)
         except Exception as exc:
             self.worker.state = ExecutionState.FAILED
-            self.result = self.experiment = None
             self._set_running_controls(False)
-            self._update_status(f"Ошибка ввода / запуска: {exc}", self.C["orange"])
-            if self.native:
-                self.export_menu.entryconfigure(0, state="disabled")
-                self.export_menu.entryconfigure(1, state="disabled")
-        else:
-            self._set_running_controls(True)
-            self._draw_empty("Расчёт выполняется…")
-            self.warning_text = self._selected_warning()
-            if self.native:
-                self.warning_var.set(self.warning_text)
-            self._set_status("Выполняется расчёт…")
-            if self.native:
-                self.export_menu.entryconfigure(0, state="disabled")
-                self.export_menu.entryconfigure(1, state="disabled")
-                if scenario == "slab":
-                    self.progressbar.configure(mode="indeterminate")
-                    self.progressbar.start(15)
-                else:
-                    self.progressbar.configure(mode="determinate", maximum=config["n_gen"], value=0)
+            self._update_status(f"Ошибка запуска: {exc}", self.C["orange"])
+            return
+        self._set_running_controls(True)
+        self._draw_empty("Расчёт выполняется…")
+        self.warning_text = self._selected_warning()
+        self._set_status("Выполняется расчёт…")
+        if self.native:
+            self.warning_var.set(self.warning_text)
+            self.notebook.select(self.pages["overview"])
+            if scenario == "slab":
+                self.progressbar.configure(mode="indeterminate")
+                self.progressbar.start(15)
+            else:
+                self.progressbar.configure(mode="determinate", maximum=config["n_gen"], value=0)
 
     def _report_progress(self, generation, k, fissions, absorptions, leakages):
         # At most one pending update; no widget access from the worker thread.
@@ -686,6 +855,8 @@ class NeutronSimGUI:
         if self._closed:
             return
         if self.native:
+            if self._after_id is not None:
+                self.root.after_cancel(self._after_id)
             self._after_id = self.root.after(100, self._poll_worker)
         progress = self._drain_progress()
         if progress and self.worker.state == ExecutionState.RUNNING:
@@ -706,13 +877,14 @@ class NeutronSimGUI:
                 self.current_gen = max(0, len(self.result.get("k_history", []))-1)
                 self._heat_cache = None
                 self._dirty_tabs = set(self.TAB_NAMES)
+                if self.native:
+                    self.active_tab = "overview"
                 self._render_all(self.result_radius)
                 elapsed = time.perf_counter()-self._started_at if self._started_at else 0
-                self._set_status(f"Расчёт завершён за {elapsed:.2f} с · Seed: {self.result.get('run_info', {}).get('seed', '—')}")
+                self._set_status(f"Расчёт завершён · {elapsed:.2f} с · конфигурация и seed сохранены в результатах")
                 if self.native:
                     self.notebook.select(self.pages["overview"])
-                    self.export_menu.entryconfigure(0, state="normal" if self.experiment is not None else "disabled")
-                    self.export_menu.entryconfigure(1, state="normal")
+                    self._sync_export_actions()
             except Exception as exc:
                 self.worker.state = ExecutionState.FAILED
                 self.result = self.experiment = None
@@ -724,10 +896,12 @@ class NeutronSimGUI:
     def _style_axis(self, ax, title="", xlabel="", ylabel="", grid=True):
         ax.clear()
         ax.set_facecolor("white")
-        ax.set_title(title, fontsize=12, color=self.C["text"], loc="left", pad=16)
-        ax.set_xlabel(xlabel, fontsize=10, color=self.C["dim"])
-        ax.set_ylabel(ylabel, fontsize=10, color=self.C["dim"])
-        ax.tick_params(colors=self.C["dim"], labelsize=9)
+        ax.set_title(title, fontsize=10, color=self.C["text"], loc="left", pad=9, fontfamily=self.PLOT_FONT)
+        ax.set_xlabel(xlabel, fontsize=9, color=self.C["dim"], fontfamily=self.PLOT_FONT)
+        ax.set_ylabel(ylabel, fontsize=9, color=self.C["dim"], fontfamily=self.PLOT_FONT)
+        ax.tick_params(colors=self.C["dim"], labelsize=8)
+        ax.xaxis.set_major_locator(MaxNLocator(nbins=5))
+        ax.yaxis.set_major_locator(MaxNLocator(nbins=5))
         ax.spines[["top", "right"]].set_visible(False)
         for spine in ax.spines.values():
             spine.set_color(self.C["border"])
@@ -743,15 +917,36 @@ class NeutronSimGUI:
 
     def _draw_empty(self, message="Запустите эксперимент для отображения результатов"):
         self._remove_colorbar()
-        for ax in (self.ax_overview, self.ax_k, self.ax_heat, self.ax_main, self.ax_bar, self.ax_population):
+        for legend in list(self.fig.legends):
+            legend.remove()
+        for ax in (self.ax_k, self.ax_heat, self.ax_main, self.ax_bar, self.ax_population):
             self._placeholder(ax, message)
-        self.cards = [("Результат", "—", "После расчёта")]*4
+        self.ax_k.set_visible(False)
+        self.ax_k.set_in_layout(False)
+        self.ax_population.set_visible(False)
+        self.ax_population.set_in_layout(False)
+        self.ax_main.set_visible(False)
+        self.ax_bar.set_visible(True)
+        self.ax_bar.set_in_layout(True)
+        self.ax_bar.set_subplotspec(self.overview_grid[:])
+        titles = ("Прошли слой", "Поглощены", "Вышли слева", "Завершено историй") if self._is_slab() else (
+            "Среднее k", "Разброс поколений σ", "Завершено историй", "Поколений")
+        self.cards = [(title, "—", "После расчёта") for title in titles]
+        self.data_rows = []
         self._sync_cards()
+        self._dirty_tabs = set(self.TAB_NAMES)
+        self._sync_visual_availability()
         if self.native:
-            self.summary_var.set("Выберите сценарий и настройте параметры слева.")
+            self.summary_var.set("Параметры слева · результаты появятся после завершения расчёта")
+            self.result_caption_var.set("Новый эксперимент" if self.worker.state != ExecutionState.RUNNING else "Вычисление конфигурации запуска")
             self.data_tree.delete(*self.data_tree.get_children())
-        for figure in self.figures.values():
-            figure.canvas.draw_idle()
+            self.cell_details.configure(state="normal")
+            self.cell_details.delete("1.0", "end")
+            self.cell_details.configure(state="disabled")
+            self.graph_combo.pack_forget()
+            self.scope_combo.pack_forget()
+            self.fractions_control.state(["disabled"])
+        self.fig.canvas.draw_idle()
 
     def _render_all(self, radius=None):
         if self.result is None:
@@ -759,23 +954,23 @@ class NeutronSimGUI:
         if self.result_scenario == "generations":
             self.current_gen = max(0, min(self.current_gen, len(self.result["k_history"])-1))
         self._update_status_full()
-        self._update_data_rows()
         self._dirty_tabs = set(self.TAB_NAMES)
-        graph_choices = ("Баланс исходов",) if self.result_scenario == "slab" else ("Коэффициент поколений", "Баланс исходов", "Частицы по поколениям")
-        if self.graph_kind not in graph_choices:
-            self.graph_kind = graph_choices[0]
+        self._sync_visual_availability()
         if self.native:
             choices = list(range(1, len(self.result.get("k_history", []))+1))
             self.generation_combo.configure(values=choices)
             self.generation_var.set(str(self.current_gen+1) if choices else "—")
-            self.graph_combo.configure(values=graph_choices)
-            self.graph_var.set(self.graph_kind)
-            self.scope_combo.configure(state="disabled" if self.result_scenario == "slab" else "readonly")
+            self.graph_combo.pack_forget()
+            self.scope_combo.pack_forget()
+            if self.result_scenario == "generations":
+                self.graph_var.set(self.graph_kind)
+                self.graph_combo.pack(side="left", padx=(0, 10), before=self.fractions_control)
+                self.scope_combo.pack(side="left", padx=(0, 10), before=self.fractions_control)
+            self.fractions_control.state(["!disabled"])
             self._render_tab(self.active_tab)
         else:
+            self._update_data_rows()
             self._draw_overview()
-            self._draw_k_chart()
-            self._draw_bar()
             self._draw_population()
             self._draw_heatmap(radius)
             self._draw_trajectories(radius)
@@ -784,31 +979,50 @@ class NeutronSimGUI:
     def _render_tab(self, tab):
         if tab not in self._dirty_tabs or self.result is None:
             return
-        if tab == "overview": self._draw_overview()
-        elif tab == "heatmap": self._draw_heatmap()
-        elif tab == "trajectories": self._draw_trajectories()
-        elif tab == "graphs":
-            if self.graph_kind == "Коэффициент поколений": self._draw_k_chart()
-            elif self.graph_kind == "Баланс исходов": self._draw_bar()
-            else: self._draw_population()
-            self._show_graph_axis()
+        if tab == "overview":
+            self._draw_overview()
+        elif tab == "visualization":
+            if self.visual_kind not in self.available_visualizations:
+                return
+            self.ax_heat.set_visible(self.visual_kind == "heatmap")
+            self.ax_heat.set_in_layout(self.visual_kind == "heatmap")
+            self.ax_main.set_visible(self.visual_kind == "trajectories")
+            self.ax_main.set_in_layout(self.visual_kind == "trajectories")
+            for legend in list(self.figures["visualization"].legends):
+                legend.remove()
+            if self.visual_kind == "heatmap":
+                self._draw_heatmap()
+            else:
+                self._remove_colorbar()
+                self._draw_trajectories()
+        elif tab == "data":
+            self._update_data_rows()
         self._dirty_tabs.discard(tab)
         if tab in self.figures:
             self.figures[tab].canvas.draw_idle()
 
     def _on_tab_changed(self, event=None):
         selected = self.notebook.select()
+        if not selected:
+            return
         self.active_tab = next(k for k, page in self.pages.items() if str(page) == selected)
-        if self.active_tab != "trajectories":
+        if self.active_tab != "visualization" or self.visual_kind != "trajectories":
             self._stop_animation()
         self._render_tab(self.active_tab)
-        self.export_menu.entryconfigure(1, state="normal" if self.result is not None and self.active_tab != "data" else "disabled")
+        self._sync_export_actions()
 
     def _draw_overview(self):
-        if self.result_scenario == "slab":
-            self._draw_balance(self.ax_overview, fractions=True, all_generations=True)
-        else:
-            self._plot_coefficients(self.ax_overview, compact=True)
+        slab = self.result_scenario == "slab"
+        for legend in list(self.fig.legends):
+            legend.remove()
+        self.ax_bar.set_subplotspec(self.overview_grid[:] if slab else self.overview_grid[0, 1])
+        self._draw_bar()
+        if not slab:
+            if self.graph_kind == "Частицы по поколениям":
+                self._draw_population()
+            else:
+                self._draw_k_chart()
+        self._show_graph_axis()
 
     def _draw_k_chart(self):
         if self.result_scenario == "slab":
@@ -817,7 +1031,8 @@ class NeutronSimGUI:
             self._plot_coefficients(self.ax_k)
 
     def _plot_coefficients(self, ax, compact=False):
-        self._style_axis(ax, "Коэффициент воспроизводства источника (учебная модель)", "Поколение", "Отношение воспроизводства")
+        self._style_axis(ax, "Воспроизводство источника\nУчебная модель поколений", "Поколение", "Коэффициент, 1")
+        ax.xaxis.set_major_locator(MaxNLocator(nbins=5, integer=True))
         history = self.result.get("k_history", [])
         if not history:
             self._placeholder(ax, "Нет обработанных поколений")
@@ -835,7 +1050,11 @@ class NeutronSimGUI:
         if not compact:
             ax.axvline(self.current_gen+1, color="#94A3B8", linewidth=.8, linestyle=":")
         ax.margins(x=.02, y=.12)
-        ax.legend(loc="upper left", bbox_to_anchor=(0, -.17), ncol=2, frameon=False, fontsize=9)
+        for legend in list(ax.figure.legends):
+            legend.remove()
+        handles, labels = ax.get_legend_handles_labels()
+        ax.figure.legend(handles, labels, loc="outside lower left", ncol=3,
+                         frameon=False, fontsize=8)
 
     def _draw_population(self):
         ax = self.ax_population
@@ -865,14 +1084,22 @@ class NeutronSimGUI:
             else:
                 gen = min(self.current_gen, len(stats)-1)
                 counts, scope = stats[gen]["outcome_counts"], f"поколение {gen+1}"
-        self._style_axis(ax, f"Баланс исходов · {scope}", "", "Доля обработанных историй" if fractions else "Число историй")
+        self._style_axis(ax, f"Баланс исходов\n{scope}", "", "Доля историй, 1" if fractions else "Число историй")
+        ax.yaxis.set_major_locator(MaxNLocator(nbins=5, integer=not fractions))
         keys = list(counts)
         if slab:
             keys = [k for k in keys if counts[k] or k in ("absorbed", "escaped_left", "escaped_right")]
         total = sum(counts.values())
         values = [counts[k]/total if fractions and total else counts[k] for k in keys]
         palette = [self.C["blue"], "#69A9A0", "#9CAEC6", "#B9A4C5", "#C9AC87"]
-        bars = ax.bar([self.OUTCOME_LABELS[k] for k in keys], values, color=palette[:len(keys)], width=.55)
+        positions = np.arange(len(keys))
+        bars = ax.bar(positions, values, color=palette[:len(keys)], width=.55)
+        ax.set_xticks(positions, [self.OUTCOME_LABELS[k].replace(" ", "\n") for k in keys])
+        if not slab:
+            ax.tick_params(axis="x", labelrotation=25)
+            for label in ax.get_xticklabels():
+                label.set_ha("right")
+                label.set_rotation_mode("anchor")
         for bar, key, value in zip(bars, keys, values):
             label = f"{value:.1%}\n(n={counts[key]})" if fractions else str(counts[key])
             ax.annotate(label, (bar.get_x()+bar.get_width()/2, bar.get_height()), xytext=(0, 5), textcoords="offset points", ha="center", fontsize=9, color=self.C["text"])
@@ -888,10 +1115,10 @@ class NeutronSimGUI:
         self._remove_colorbar()
         ax = self.ax_heat
         if self.result_scenario != "generations":
-            self._placeholder(ax, "Пространственные события слоя не сохранены в исследовательском результате.\nДоступны агрегированные исходы во вкладках «Графики» и «Данные».")
+            self._placeholder(ax, "Пространственные события слоя не сохранены в исследовательском результате.\nАгрегированные исходы доступны в «Обзоре» и «Данных».")
             return
         radius = radius or self.result_radius or float(self._get("radius"))
-        self._style_axis(ax, "Зарегистрированные деления · проекция X–Y, все поколения", "X, см", "Y, см", grid=False)
+        self._style_axis(ax, "Зарегистрированные деления\nПроекция X–Y · все поколения", "X, см", "Y, см", grid=False)
         bins = int(self.heat_bins)
         if not 10 <= bins <= 200:
             raise ValueError("Разрешение карты должно быть от 10 до 200 ячеек на ось.")
@@ -908,8 +1135,9 @@ class NeutronSimGUI:
             self._placeholder(ax, "В расчёте не зарегистрированы координаты делений.\nКарта нейтронного потока этим алгоритмом не рассчитывается.")
             return
         mesh = ax.pcolormesh(edges, edges, hist.T, cmap="viridis", shading="flat", rasterized=True)
-        self._colorbar = self.figures["heatmap"].colorbar(mesh, ax=ax, pad=.035)
-        self._colorbar.set_label("Зарегистрировано делений в ячейке", fontsize=10)
+        self._colorbar = self.figures["visualization"].colorbar(mesh, ax=ax, pad=.025)
+        self._colorbar.set_label("Зарегистрировано делений в ячейке", fontsize=9, fontfamily=self.PLOT_FONT)
+        self._colorbar.ax.tick_params(colors=self.C["dim"], labelsize=8)
         ax.add_patch(Circle((0, 0), radius, fill=False, edgecolor="#64748B", linewidth=1.1, linestyle="--"))
         ax.set(xlim=(-radius*1.03, radius*1.03), ylim=(-radius*1.03, radius*1.03), aspect="equal")
 
@@ -949,25 +1177,32 @@ class NeutronSimGUI:
         note = f"Выборка: {len(paths)} из {processed} историй. Проекция X–Y."
         if not paths:
             ax.text(.5, .5, "Траектории не сохранены для этого поколения", ha="center", transform=ax.transAxes, color=self.C["dim"])
-        else:
-            ax.legend(loc="upper left", bbox_to_anchor=(0, -.17), ncol=2, frameon=False, fontsize=9)
+        elif ax.get_visible():
+            for legend in list(ax.figure.legends):
+                legend.remove()
+            handles, labels = ax.get_legend_handles_labels()
+            ax.figure.legend(handles, labels, loc="outside lower left", ncol=4,
+                             frameon=False, fontsize=8)
         ax.set_xlabel("X, см\n"+note, fontsize=9)
 
     def _show_graph_axis(self):
-        self.ax_k.set_visible(self.graph_kind == "Коэффициент поколений")
-        self.ax_bar.set_visible(self.graph_kind == "Баланс исходов")
-        self.ax_population.set_visible(self.graph_kind == "Частицы по поколениям")
+        generations = self.result is not None and self.result_scenario == "generations"
+        self.ax_k.set_visible(generations and self.graph_kind != "Частицы по поколениям")
+        self.ax_k.set_in_layout(self.ax_k.get_visible())
+        self.ax_bar.set_visible(True)
+        self.ax_population.set_visible(generations and self.graph_kind == "Частицы по поколениям")
+        self.ax_population.set_in_layout(self.ax_population.get_visible())
 
     def _graph_changed(self, event=None):
         self.graph_kind, self.balance_scope = self.graph_var.get(), self.scope_var.get()
         self.balance_fractions = self.fractions_var.get()
-        self._dirty_tabs.add("graphs")
-        self._render_tab("graphs")
+        self._dirty_tabs.add("overview")
+        self._render_tab("overview")
 
     def _change_bins(self, event=None):
         self.heat_bins = int(self.bin_var.get())
-        self._dirty_tabs.add("heatmap")
-        self._render_tab("heatmap")
+        self._dirty_tabs.add("visualization")
+        self._render_tab("visualization")
 
     def _sync_cards(self):
         if self.native:
@@ -1045,6 +1280,7 @@ class NeutronSimGUI:
         for i, text in enumerate(lines):
             self.ax_stat.text(.02, .96-i*.85/max(1, len(lines)), text, transform=self.ax_stat.transAxes, fontsize=9)
         self._sync_cards()
+        self._sync_result_caption()
         if self.native:
             self.summary_var.set(self.summary_text)
             self.warning_var.set(self.warning_text)
@@ -1053,7 +1289,7 @@ class NeutronSimGUI:
         r, rows = self.result, []
         def add(name, value, unit="", uncertainty="—", source=""):
             if value is None: value = "Неизвестно / недоступно"
-            if isinstance(value, float): value = f"{value:.8g}"
+            if isinstance(value, float): value = repr(value)
             rows.append((name, str(value), unit, uncertainty, source))
         if self.result_scenario == "slab":
             config = self.result_config or self.experiment["configuration"]
@@ -1106,21 +1342,32 @@ class NeutronSimGUI:
             self.data_tree.delete(*self.data_tree.get_children())
             for row in rows: self.data_tree.insert("", "end", values=row)
 
-    def _show_details(self):
+    def _show_details(self, *, current_form=False):
         from tkinter import scrolledtext
         dialog = self.tk.Toplevel(self.root)
-        dialog.title("Ограничения и происхождение данных")
-        dialog.geometry("720x520")
-        text = scrolledtext.ScrolledText(dialog, wrap="word", padx=16, pady=16, font=("Segoe UI", 10))
+        dialog.title("Данные материала и ограничения")
+        dialog.geometry("700x510")
+        text = scrolledtext.ScrolledText(dialog, wrap="word", padx=14, pady=14, font=("Segoe UI", 10))
         text.pack(fill="both", expand=True)
-        details = self.warning_text or "Подробные сведения о данных появятся после расчёта."
-        details += "\n\nПоколения: k_g = int(F_g × ν) / N_g до ограничения численности источника. σ по поколениям не является ошибкой среднего.\n\nСлой: постоянные коэффициенты; независимые истории. Интервалы — маргинальные биномиальные, без неопределённости параметров и ошибки модели."
-        if self.experiment is not None and self.experiment["configuration"].get("reference_profile"):
-            p = self.experiment["configuration"]["reference_profile"]
-            details += (f"\n\n{p['source_library']} · {p['source_version']}\nЭнергетические границы: {p['energy_bounds_ev']} эВ\nМатериал: {p['material_temperature_K']} K\nСпектр: {p['spectrum']}\n"
-                "Связанные состояния атомов, S(α,β), кристаллические эффекты и изменение энергии после столкновений не моделируются. "
-                "Для группового профиля спектр удерживается фиксированным; ослабление с усреднённым коэффициентом не равно спектральному усреднению ослабления. "
-                "Плотность графита задаётся пользователем и не проходит независимую проверку.\n\nИсточники:\n"+"\n".join(p["source_urls"]))
+        use_result = self.result is not None and not current_form
+        slab = self.result_scenario == "slab" if use_result else self._is_slab()
+        profile = None
+        if use_result:
+            details = self.warning_text + "\n\n" + self.summary_text
+            if self.experiment is not None:
+                profile = self.experiment["configuration"].get("reference_profile")
+        else:
+            details = self._selected_warning()
+            if slab and self._get("material_mode") == "Reference":
+                profile = get_reference_profiles().get(self._get("profile"))
+        if not slab:
+            details += "\n\nИсторическая модель: k_g = int(F_g × ν) / N_g до ограничения источника. σ поколений — описательный разброс, не стандартная ошибка среднего. Этот показатель не является физически валидированной оценкой k_eff. Источники старых констант неизвестны."
+        else:
+            details += "\n\nНезависимые истории с постоянными коэффициентами в см⁻¹. Рассеяние изотропное, внешние границы допускают выход частиц. Интервалы — маргинальные биномиальные, без ошибки модели и неопределённости входных параметров. При незавершённых историях полные оценки и интервалы недоступны. Исследовательский архив не содержит пространственных траекторий."
+        if profile:
+            p = profile
+            details += (f"\n\nИсточник: {p['source_library']}\nВерсия: {p['source_version']}\nГраницы: {p['energy_bounds_ev']} эВ\nМатериал: {p['material_temperature_K']} K\nСпектр: {p['spectrum']}\nМетод: {p['averaging_method']}\n"
+                "Проверка чисел источника не валидирует транспортную модель. Связанные атомы, S(α,β), кристаллические эффекты и перераспределение энергии не моделируются. Для группового профиля спектр фиксирован; ослабление со средним коэффициентом отличается от спектрально усреднённого ослабления. Плотность графита — пользовательский неподтверждённый вход.\n\n" + "\n".join(p["source_urls"]))
         text.insert("1.0", details)
         text.configure(state="disabled")
 
@@ -1145,7 +1392,7 @@ class NeutronSimGUI:
         self._update_status_full()
         if self.native:
             self.generation_var.set(str(self.current_gen+1))
-            self._dirty_tabs.update(("graphs", "trajectories"))
+            self._dirty_tabs.update(("overview", "visualization"))
             self._render_tab(self.active_tab)
         else:
             self._draw_trajectories()
@@ -1176,9 +1423,9 @@ class NeutronSimGUI:
             self.current_gen = frame % len(self.result["k_history"])
             self._refresh_generation()
             return []
-        self.anim_obj = animation.FuncAnimation(self.figures["trajectories"], update,
+        self.anim_obj = animation.FuncAnimation(self.figures["visualization"], update,
             frames=len(self.result["k_history"]), interval=650, repeat=True, blit=False, cache_frame_data=False)
-        self.figures["trajectories"].canvas.draw_idle()
+        self.figures["visualization"].canvas.draw_idle()
 
     def save_experiment(self, directory):
         if self.experiment is None:
@@ -1202,7 +1449,7 @@ class NeutronSimGUI:
         profile = self.result_config.get("reference_profile")
         if profile:
             self._set("profile", profile["profile_id"])
-            self._set("material", "Вода (H₂O)" if "water" in self.result_config["layers"][0]["material_id"] else "Графит")
+            self._set("slab_material", "Вода (H₂O)" if "water" in self.result_config["layers"][0]["material_id"] else "Графит")
             state = self.result_config["layers"][0].get("state") or {}
             origin = state.get("origin") or {}
             self._set("density", state.get("density") or "")
@@ -1213,26 +1460,35 @@ class NeutronSimGUI:
             self._set("absorption", quantities.get("absorption_rate", ""))
             self._set("scattering", quantities.get("scattering_rate", ""))
         self._heat_cache = None
+        self.result_inputs = self._form_snapshot()
+        self.form_dirty, self.last_error = False, None
+        self.active_tab = "overview"
         if self.native:
             self._on_scenario_change()
             self.action_buttons["run"].configure(text="Повторить")
-            self.export_menu.entryconfigure(0, state="normal")
-            self.export_menu.entryconfigure(1, state="normal")
             self.notebook.select(self.pages["overview"])
         self._set_running_controls(False)
         self._render_all()
+        self._sync_export_actions()
         self._set_status("Эксперимент загружен. «Повторить» использует полную исходную конфигурацию; для редактирования выберите «Новый».")
         return experiment
 
     def save_plot(self, path, *, tab=None):
         tab = tab or self.active_tab
+        if tab == "graphs":  # Earlier programmatic plot-export selection.
+            tab = "overview"
+        if tab in ("heatmap", "trajectories"):
+            if tab not in self.available_visualizations:
+                raise ValueError("Для выбранной визуализации нет пространственных данных.")
+            self.visual_kind, tab = tab, "visualization"
         if tab not in self.figures:
-            raise ValueError("Выберите вкладку с графиком для экспорта PNG.")
+            raise ValueError("Выберите обзор или доступную визуализацию для экспорта PNG.")
         if self.result is None:
             raise ValueError("Сначала выполните или откройте эксперимент.")
-        if self.native:
-            self._dirty_tabs.add(tab)
-            self._render_tab(tab)
+        if tab == "visualization" and not self.available_visualizations:
+            raise ValueError("В результатах отсутствуют пространственные данные.")
+        self._dirty_tabs.add(tab)
+        self._render_tab(tab)
         self.figures[tab].savefig(path, dpi=300, bbox_inches="tight", facecolor="white")
 
     def _open_dialog(self):
@@ -1269,22 +1525,30 @@ class NeutronSimGUI:
         if self.worker.state == ExecutionState.RUNNING:
             return
         self._stop_animation()
+        self._building = True
         self.loaded_configuration = None
-        self.result = self.experiment = self.result_config = None
+        self.result = self.experiment = self.result_config = self.result_inputs = None
+        self.form_dirty, self.last_error = False, None
         self.result_radius = None
         self.result_scenario, self.current_gen, self.seed = "generations", 0, None
-        for name, value in self.DEFAULTS.items(): self._set(name, value)
-        self._heat_cache, self.data_rows = None, []
-        self._set_running_controls(False)
-        self._draw_empty()
-        self.warning_text = "Legacy: исторические параметры; физическая валидация показателя не выполнена."
+        for name, value in self.DEFAULTS.items():
+            self._set(name, value)
+        self._heat_cache = None
+        self._building = False
         if self.native:
-            self._on_scenario_change()
+            self.advanced.pack_forget()
+            self.material_details.pack_forget()
+            self.advanced_button.configure(text="▸ Дополнительные")
+            self.material_button.configure(text="▸ Сведения о материале")
+        self._set_running_controls(False)
+        self._on_scenario_change()
+        self._draw_empty()
+        self.warning_text = self._selected_warning()
+        if self.native:
             self.warning_var.set(self.warning_text)
             self.action_buttons["run"].configure(text="Запустить")
-            self.export_menu.entryconfigure(0, state="disabled")
-            self.export_menu.entryconfigure(1, state="disabled")
             self.notebook.select(self.pages["overview"])
+        self._sync_export_actions()
         self._set_status("Готово к новому эксперименту")
 
     def _on_close(self, event=None):

@@ -1,16 +1,7 @@
-﻿"""
-БЛОК 3 — ФИЗИКА МОНТЕ-КАРЛО (с массивами и Numba).
+"""Monte Carlo transport, generation statistics and slab experiment archives.
 
-Ядро симуляции нейтронного транспорта:
-  - выборка длин пробега          (sample_distances_batch)
-  - выборка типов реакций         (sample_reactions_batch)
-  - генерация направлений рассеяния (scatter_directions)
-  - транспорт партии нейтронов   (transport_batch)
-  - оркестрация поколения        (run_generation_batch)
-  - отношение воспроизводства источника по поколениям (estimate_k_full)
-
-Соответствует БЛОКУ 3 исходного монолита NSPM MCNP 3000.py.
-Модель транспорта сохранена; статистика учитывает всё поколение отдельно от выборки путей.
+Generation transport uses NumPy arrays with optional Numba acceleration.
+Independent slab histories use explicit constant rates and no multiplication.
 """
 
 import numpy as np
@@ -190,15 +181,12 @@ def _transport_batch(positions, directions, mfp, sigma_f, sigma_a, sigma_s,
         paths[j, 0] = positions[i]
 
     for step in range(max_steps):
-        # Кто ещё живой?
         alive_count = np.sum(alive)
         if alive_count == 0:
             break
 
-        # Расстояния для живых нейтронов
         dists = _sample_distances_batch(mfp, n_neutrons)
 
-        # Сдвигаем позиции
         for i in range(n_neutrons):
             if alive[i]:
                 for axis in range(3):
@@ -208,7 +196,6 @@ def _transport_batch(positions, directions, mfp, sigma_f, sigma_a, sigma_s,
                     paths[j, lengths[j]] = positions[i]
                     lengths[j] += 1
 
-        # Проверяем утечку
         for i in range(n_neutrons):
             if alive[i]:
                 r = np.sqrt(positions[i, 0]**2 + positions[i, 1]**2 + positions[i, 2]**2)
@@ -216,7 +203,6 @@ def _transport_batch(positions, directions, mfp, sigma_f, sigma_a, sigma_s,
                     alive[i] = False
                     fates[i] = 2  # leak
 
-        # Генерируем реакции для живых
         reactions = _sample_reactions_batch(sigma_f, sigma_a, sigma_s, n_neutrons)
 
         for i in range(n_neutrons):
@@ -309,7 +295,6 @@ def run_generation_batch(positions, directions, material, radius, max_samples_pe
     data = resolve_transport_data(material)
     rng = np.random.default_rng(seed) if rng is None else rng
 
-    # Транспортируем нейтроны
     final_pos, final_dirs, fates, fiss_pts, all_paths = transport_batch(
         positions, directions,
         data.mean_free_path,
@@ -322,7 +307,6 @@ def run_generation_batch(positions, directions, material, radius, max_samples_pe
     # The public transport boundary validates and copies the inputs once.
     n_neutrons = len(final_pos)
 
-    # Подсчитываем результаты
     fissions = np.sum(fates == 0)
     absorptions = np.sum(fates == 1)
     leakages = np.sum(fates == 2)
@@ -335,7 +319,6 @@ def run_generation_batch(positions, directions, material, radius, max_samples_pe
     if sum(outcome_counts.values()) != n_neutrons:
         raise RuntimeError("Generation outcome counts do not match processed particles")
 
-    # Формируем новый источник (вторичные нейтроны)
     secondary_expectation = float(fissions) * data.nu
     if not np.isfinite(secondary_expectation):
         raise MemoryError("Secondary population exceeds finite allocation capacity")
@@ -344,18 +327,14 @@ def run_generation_batch(positions, directions, material, radius, max_samples_pe
                   secondary=n_secondary)
 
     if n_secondary > 0:
-        # Позиции вторичных — там же, где произошли деления
         new_directions = rng.standard_normal((n_secondary, 3))
 
-        # Нормализуем направления
         norms = np.linalg.norm(new_directions, axis=1, keepdims=True)
         norms = np.where(norms > 0, norms, 1.0)
         new_directions = new_directions / norms
 
-        # Распределяем вторичные нейтроны
         fiss_idx = np.where(fates == 0)[0]
         if len(fiss_idx) > 0:
-            # Случайно выбираем позиции делений для вторичных
             # Standard NumPy Generators preserve scalar int64 draws and their
             # continuation state for this bounded-integer batch on supported
             # versions (covered by compatibility tests). Keep custom RNGs on
@@ -372,14 +351,12 @@ def run_generation_batch(positions, directions, material, radius, max_samples_pe
         new_positions = np.zeros((0, 3), dtype=float)
         new_directions = np.zeros((0, 3), dtype=float)
 
-    # Формируем пути для визуализации (семпл до max_samples_per_gen)
     sample_count = min(n_neutrons, max_samples_per_gen)
     sample_idx = np.arange(sample_count) * n_neutrons // max(1, sample_count)
     path_frames = []
     fate_map = {0: "fission", 1: "absorption", 2: "leak", -1: "unfinished"}
 
     for slot, idx in enumerate(sample_idx):
-        # Используем полную историю пути из transport_batch
         path = all_paths[slot]
         fate = fate_map.get(fates[idx], "unknown")
         path_frames.append((path, fate))
@@ -423,7 +400,6 @@ def estimate_k_full(n_gen=30, n_source=150, radius=25.0,
 
     data = resolve_transport_data(material)
 
-    # Инициализация исходного поколения как массивы
     positions = np.zeros((n_source, 3), dtype=float)
     directions = rng.standard_normal((n_source, 3))
     norms = np.linalg.norm(directions, axis=1, keepdims=True)
@@ -442,7 +418,6 @@ def estimate_k_full(n_gen=30, n_source=150, radius=25.0,
         if positions.shape[0] == 0:
             break
 
-        # Транспортируем поколение
         (next_pos, next_dirs,
          fiss, abso, leak,
          paths, fpts, counts) = run_generation_batch(
@@ -466,7 +441,6 @@ def estimate_k_full(n_gen=30, n_source=150, radius=25.0,
         if callback:
             callback(gen + 1, k, fiss, abso, leak)
 
-        # Обновляем источник
         if len(next_pos) == 0:
             break
         elif len(next_pos) > n_source:
